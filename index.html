@@ -44,6 +44,16 @@ button,input,select{font:inherit;color:inherit}
 select.pick,input.num{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
 input.num{width:48px;text-align:center;font-family:var(--font-mono)}
 .readout{font-family:var(--font-mono);font-size:12px;color:var(--muted);min-width:42px;text-align:center}
+.zoombox{display:inline-flex;align-items:center;gap:2px;background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:3px 7px}
+.zoombox input{width:38px;background:transparent;border:0;padding:0;text-align:right;font-family:var(--font-mono);font-size:12px;color:var(--text);-moz-appearance:textfield}
+.zoombox input::-webkit-outer-spin-button,.zoombox input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.zoombox .pctsign{font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.zoombox.fit input{color:var(--muted)}
+.pop{position:absolute;top:calc(100% + 6px);left:0;z-index:30;background:var(--chrome);border:1px solid var(--line);border-radius:8px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);min-width:210px}
+.poprow{display:flex;align-items:center;gap:7px}
+.poprow+.poprow{margin-top:9px}
+.poprow.end{justify-content:flex-end}
+.pophint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;font-family:var(--font-mono)}
 .switch{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none}
 .switch input{appearance:none;width:32px;height:18px;border-radius:9px;background:#39434F;position:relative;cursor:pointer;transition:background .18s;margin:0}
 .switch input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--muted);transition:transform .18s,background .18s}
@@ -135,22 +145,31 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
       </div>
     </div>
 
-    <div class="group">
+    <div class="group" style="position:relative">
       <span class="lab">每列</span>
       <select class="pick" id="cols">
-        <option value="auto">自動</option>
+        <option value="auto">自動鋪滿</option>
         <option value="2">2 欄</option>
         <option value="3">3 欄</option>
         <option value="4">4 欄</option>
         <option value="5">5 欄</option>
         <option value="6">6 欄</option>
+        <option value="custom" hidden>自訂</option>
       </select>
+      <button class="btn sq" id="gridGear" title="自訂欄 × 列">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1M12.6 12.6l-1.1-1.1M4.5 4.5L3.4 3.4"/></svg>
+      </button>
+      <div class="pop" id="gridPop" hidden>
+        <div class="poprow"><span class="lab">欄</span><input class="num" type="number" id="gCols" min="1" max="12" value="2"><span class="lab">列</span><input class="num" type="number" id="gRows" min="1" max="12" value="1"></div>
+        <div class="pophint" id="gHint"></div>
+        <div class="poprow end"><button class="btn" id="gApply">套用</button></div>
+      </div>
     </div>
 
     <div class="group">
       <span class="lab">縮放</span>
       <button class="btn sq" id="zoomOut">−</button>
-      <span class="readout" id="zoomRead">符合寬度</span>
+      <span class="zoombox"><input type="number" id="zoomInput" min="10" max="600" step="5" title="輸入百分比,或按 + / −"><span class="pctsign">%</span></span>
       <button class="btn sq" id="zoomIn">＋</button>
       <button class="btn" id="zoomFit">符合寬度</button>
     </div>
@@ -220,7 +239,7 @@ var clamp = function(v,a,b){ return Math.max(a, Math.min(b, v)); };
 var MAX = 12;
 
 var docs = [];
-var state = { mode:"side", zoom:"fit", cols:"auto", sync:true, baseId:null, page:1 };
+var state = { mode:"side", zoom:"fit", cols:"auto", sync:true, baseId:null, page:1, gridCols:2, gridRows:1 };
 var uid = 0;
 
 function setStatus(t){ $("statusText").textContent = t; }
@@ -368,32 +387,46 @@ function clearAll(){
 }
 
 /* ================= grid ================= */
+/* 自動鋪滿:每列盡量填滿(上限 6 欄),份數除不盡時,空格一律落在最後一列(往下留空),
+ * 絕不會在右側留一整欄空白。 */
 function autoCols(n){
   if(n <= 1) return 1;
-  var rows = Math.ceil(n / 5);
-  return Math.ceil(n / rows);
+  var cap = 6;
+  var rows = Math.ceil(n / cap);           // 需要幾列
+  return Math.ceil(n / rows);              // 讓每列盡量平均、鋪滿
 }
 function colCount(n){
-  return state.cols === "auto" ? autoCols(n) : clamp(parseInt(state.cols, 10), 1, 6);
+  if(state.cols === "auto") return autoCols(n);
+  if(state.cols === "custom") return clamp(state.gridCols || 1, 1, 12);
+  return clamp(parseInt(state.cols, 10), 1, 6);
 }
 function refreshGrid(){
   var n = docs.length;
   $("emptyState").hidden = n > 0;
-  $("grid").style.gridTemplateColumns = "repeat(" + colCount(n) + ",minmax(0,1fr))";
+  var cols = colCount(n);
+  var g = $("grid");
+  g.style.gridTemplateColumns = "repeat(" + cols + ",minmax(0,1fr))";
+  // 自訂模式:同時固定列數,讓每格等高;其他模式讓列高隨內容
+  if(state.cols === "custom" && state.gridRows > 0){
+    g.style.gridTemplateRows = "repeat(" + clamp(state.gridRows, 1, 12) + ",minmax(0,1fr))";
+    g.style.gridAutoRows = "";
+  } else {
+    g.style.gridTemplateRows = "";
+    g.style.gridAutoRows = "minmax(0,1fr)";
+  }
   var m = Math.max(1, n - 1);
   $("ovlGrid").style.gridTemplateColumns = "repeat(" + colCount(m) + ",minmax(0,1fr))";
   requestAnimationFrame(relayoutAll);
 }
 
 /* ================= render ================= */
-function scaleFor(d){
-  if(state.zoom === "fit"){
-    var avail = d.scroll.clientWidth - 28;
-    var maxW = 1;
-    for(var i=0;i<d.sizes.length;i++) maxW = Math.max(maxW, d.sizes[i].w);
-    return clamp(avail / maxW, 0.05, 5);
-  }
-  return state.zoom;
+/* 回傳第 i 頁該用的縮放比例。fit 模式:整份以最寬頁符合欄寬;手動縮放則用固定倍率。 */
+function pageScale(d, i){
+  if(state.zoom !== "fit") return state.zoom;
+  var avail = d.scroll.clientWidth - 28;
+  var maxW = 1;
+  for(var k=0;k<d.sizes.length;k++) maxW = Math.max(maxW, d.sizes[k].w);
+  return clamp(avail / maxW, 0.05, 5);
 }
 
 var PAD = 12, GAP = 12;
@@ -427,9 +460,11 @@ function layout(d){
 /* resize instantly with CSS, then re-render sharp a moment later */
 function applyScale(d){
   if(!d.doc || !d.wraps.length) return;
-  d.scale = scaleFor(d);
+  d.scales = [];
   d.wraps.forEach(function(w, i){
-    var cw = Math.round(d.sizes[i].w * d.scale), ch = Math.round(d.sizes[i].h * d.scale);
+    var sc = pageScale(d, i);
+    d.scales[i] = sc;
+    var cw = Math.round(d.sizes[i].w * sc), ch = Math.round(d.sizes[i].h * sc);
     w.style.width = cw + "px";
     w.style.height = ch + "px";
     var cv = w.querySelector("canvas");
@@ -444,7 +479,7 @@ function measure(d){
   var y = PAD;
   d.tops = []; d.hs = [];
   for(var i=0;i<d.sizes.length;i++){
-    var h = Math.round(d.sizes[i].h * d.scale);
+    var h = Math.round(d.sizes[i].h * (d.scales[i] || 1));
     d.tops.push(y); d.hs.push(h);
     y += h + GAP;
   }
@@ -464,7 +499,8 @@ function schedulePaint(d){
 /* render queue: keeps 10 panes from all rasterising at once */
 var jobs = [], active = 0, MAXJOB = 3;
 function enqueue(d, w){
-  if(w._queued || (w._done && w._scale === d.scale)) return;
+  var i = +w.dataset.i, sc = d.scales ? d.scales[i] : 1;
+  if(w._queued || (w._done && w._scale === sc)) return;
   w._queued = true;
   jobs.push({ d:d, w:w, base: d.id === state.baseId });
   pump();
@@ -488,9 +524,9 @@ function budgetDpr(w, h){
 }
 
 function paint(d, wrap){
-  var i = +wrap.dataset.i, scale = d.scale;
+  var i = +wrap.dataset.i, scale = d.scales ? d.scales[i] : 1;
   return d.doc.getPage(i+1).then(function(pg){
-    if(d.scale !== scale || !wrap._vis) return;
+    if((d.scales ? d.scales[i] : 1) !== scale || !wrap._vis) return;
     var vp = pg.getViewport({ scale: scale });
     var dpr = budgetDpr(vp.width, vp.height);
     var cv = document.createElement("canvas");
@@ -503,7 +539,7 @@ function paint(d, wrap){
     var task = pg.render({ canvasContext: ctx, viewport: vp, background: "#FFFFFF" });
     wrap._task = task;
     return task.promise.then(function(){
-      if(d.scale !== scale) return;
+      if((d.scales ? d.scales[i] : 1) !== scale) return;
       var old = wrap.querySelector("canvas");
       if(old) wrap.removeChild(old);
       wrap.appendChild(cv);
@@ -531,6 +567,7 @@ function relayoutAll(){
     goTo(d, keep.i, keep.f);
     setHCenter(d, kx);
   });
+  if(typeof updateZoomBox === "function") updateZoomBox();
 }
 
 /* ================= sync ================= */
@@ -639,6 +676,47 @@ function pixels(cv, W, H){
   return c.getImageData(0,0,W,H).data;
 }
 
+/* ===== 疊圖核心(WebAssembly) =====
+ * 差異運算的核心以 WebAssembly 執行,原始邏輯不以明文 JS 形式出現在此檔中。
+ * 若瀏覽器不支援或載入失敗,會自動退回等價的 JS 版本,功能不受影響。 */
+var OVL_WASM_B64 = "AGFzbQEAAAABDQJgBH9/f38Bf2AAAX8DBAMAAQEEBQFwAQEBBQQBAIAIBgkBfwFBgIiEGAsHKwQGbWVtb3J5AgAIcG9vbF9wdHIAAQlwb29sX3NpemUAAgdjb21wb3NlAAAKxQcDsQcDA38GfAR/QQAhBAJAIANFDQBBgIiAgAAhBQNARAAAAAAAAPA/IAUgAGoiBkECai0AALhEyXa+nxovvT+iIAYtAAC4RIlBYOXQItM/oiAGQQFqLQAAuERiEFg5tMjiP6KgoEQAAAAAAOBvQKOhIgdEAAAAAAAA8D8gBSABaiIGQQJqLQAAuETJdr6fGi+9P6IgBi0AALhEiUFg5dAi0z+iIAZBAWotAAC4RGIQWDm0yOI/oqCgRAAAAAAA4G9Ao6EiCCAHIAhjGyIJRPYoXI/C9ei/okQAAAAAAADwP6BEAAAAAADgb0CiIgogByAJoSIHRJKSkpKSkuK/okQAAAAAAADwP6CiIQsgCCAJoSIIRBwbGxsbG8u/okQAAAAAAADwP6AhDCAIRFhYWFhYWNi/okQAAAAAAADwP6AgCiAHRNva2tra2uq/okQAAAAAAADwP6CioiEJQQAhDQJAIAhEPDw8PDw87L+iRAAAAAAAAPA/oCAKIAdElJSUlJSUxL+iRAAAAAAAAPA/oKKiIgpEAAAAAAAAAABlDQBB/wEhDSAKRAAAAAAA4G9AZg0AAkACQCAKmUQAAAAAAADgQWNFDQAgCqohBgwBC0GAgICAeCEGCwJAAkAgCiAGt6EiCkQAAAAAAADgP2RFDQAgBkEBaiEGDAELIAYgCkQAAAAAAADgP2FxIAZqIQYLIAZB/wEgBkH/AUgbIQ0LIAhEexSuR+F6tD9kIQ4gB0R7FK5H4Xq0P2QhDyAMIAuiIQcgBSACaiIGIA06AABBACENQQAhEAJAIAlEAAAAAAAAAABlDQBB/wEhECAJRAAAAAAA4G9AZg0AAkACQCAJmUQAAAAAAADgQWNFDQAgCaohEAwBC0GAgICAeCEQCwJAAkAgCSAQt6EiCEQAAAAAAADgP2RFDQAgEEEBaiEQDAELIBAgCEQAAAAAAADgP2FxIBBqIRALIBBB/wEgEEH/AUgbIRALIA8gDnIhDiAGQQFqIBA6AAACQCAHRAAAAAAAAAAAZQ0AQf8BIQ0gB0QAAAAAAOBvQGYNAAJAAkAgB5lEAAAAAAAA4EFjRQ0AIAeqIQ0MAQtBgICAgHghDQsCQAJAIAcgDbehIgdEAAAAAAAA4D9kRQ0AIA1BAWohDQwBCyANIAdEAAAAAAAA4D9hcSANaiENCyANQf8BIA1B/wFIGyENCyAEIA5qIQQgBkEDakH/AToAACAGQQJqIA06AAAgBUEEaiEFIANBf2oiAw0ACwsgBAsIAEGAiICAAAsHAEGAgIAYCwBJBG5hbWUADQxvdmVybGF5Lndhc20BHwMAB2NvbXBvc2UBCHBvb2xfcHRyAglwb29sX3NpemUHEgEAD19fc3RhY2tfcG9pbnRlcgA4CXByb2R1Y2VycwEMcHJvY2Vzc2VkLWJ5AQxVYnVudHUgY2xhbmcRMTguMS4zICgxdWJ1bnR1MSkALA90YXJnZXRfZmVhdHVyZXMCKw9tdXRhYmxlLWdsb2JhbHMrCHNpZ24tZXh0";
+var ovlCore = { ready:false, ex:null, view:null };
+(function initOverlayCore(){
+  try{
+    var bin = atob(OVL_WASM_B64);
+    var bytes = new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    WebAssembly.instantiate(bytes, {}).then(function(res){
+      var ex = res.instance.exports;
+      ovlCore.ex = ex;
+      ovlCore.ptr = ex.pool_ptr();
+      ovlCore.size = ex.pool_size();
+      ovlCore.mem = ex.memory;
+      ovlCore.ready = true;
+    }).catch(function(){ ovlCore.ready = false; });
+  }catch(e){ ovlCore.ready = false; }
+})();
+
+/* 用 wasm 合成一張差異影像;成功回傳 {data, changed},失敗回傳 null 由呼叫端走 JS 版 */
+function composeWasm(da, db, W, H){
+  if(!ovlCore.ready) return null;
+  var n = W * H, need = n * 4 * 3;
+  try{
+    // pool 若不夠大(超大頁面),直接放棄改走 JS
+    if(need > ovlCore.size) return null;
+    // memory 可能因先前 grow 而 detach,每次重新取 view
+    var pool = new Uint8Array(ovlCore.mem.buffer, ovlCore.ptr, ovlCore.size);
+    var aOff = 0, bOff = n*4, outOff = n*8;
+    pool.set(da, aOff);
+    pool.set(db, bOff);
+    var changed = ovlCore.ex.compose(aOff, bOff, outOff, n);
+    // 複製結果出來(pool 會被下次呼叫覆寫)
+    var out = new Uint8ClampedArray(n*4);
+    out.set(new Uint8Array(ovlCore.mem.buffer, ovlCore.ptr + outOff, n*4));
+    return { data: out, changed: changed >>> 0 };
+  }catch(e){ return null; }
+}
+
 var busy = false;
 function composeAll(){
   var b = baseDoc();
@@ -676,16 +754,23 @@ function composeAll(){
           out.style.width = (W/dpr) + "px"; out.style.height = (H/dpr) + "px";
           var ctx = out.getContext("2d");
           var img = ctx.createImageData(W, H), o = img.data, changed = 0;
-          for(var i=0;i<o.length;i+=4){
-            var ia = 1 - (da[i]*0.299 + da[i+1]*0.587 + da[i+2]*0.114)/255;
-            var ib = 1 - (db[i]*0.299 + db[i+1]*0.587 + db[i+2]*0.114)/255;
-            var both = ia < ib ? ia : ib;
-            var oa = ia - both, ob = ib - both;
-            if(oa > 0.08 || ob > 0.08) changed++;
-            var r = 255*(1-both*0.78), g = r, bl = r;
-            r *= (1-oa*(1-214/255)); g *= (1-oa*(1-41/255)); bl *= (1-oa*(1-107/255));
-            r *= (1-ob*(1-30/255)); g *= (1-ob*(1-158/255)); bl *= (1-ob*(1-201/255));
-            o[i]=r; o[i+1]=g; o[i+2]=bl; o[i+3]=255;
+
+          var wres = composeWasm(da, db, W, H);
+          if(wres){
+            o.set(wres.data);
+            changed = wres.changed;
+          } else {
+            for(var i=0;i<o.length;i+=4){
+              var ia = 1 - (da[i]*0.299 + da[i+1]*0.587 + da[i+2]*0.114)/255;
+              var ib = 1 - (db[i]*0.299 + db[i+1]*0.587 + db[i+2]*0.114)/255;
+              var both = ia < ib ? ia : ib;
+              var oa = ia - both, ob = ib - both;
+              if(oa > 0.08 || ob > 0.08) changed++;
+              var r = 255*(1-both*0.78), g = r, bl = r;
+              r *= (1-oa*(1-214/255)); g *= (1-oa*(1-41/255)); bl *= (1-oa*(1-107/255));
+              r *= (1-ob*(1-30/255)); g *= (1-ob*(1-158/255)); bl *= (1-ob*(1-201/255));
+              o[i]=r; o[i+1]=g; o[i+2]=bl; o[i+3]=255;
+            }
           }
           ctx.putImageData(img, 0, 0);
           frame.hidden = false; note.hidden = true;
@@ -962,23 +1047,88 @@ function setMode(mode){
   }
 }
 
-$("cols").addEventListener("change", function(e){ state.cols = e.target.value; refreshGrid(); if(state.mode === "overlay") composeAll(); });
+$("cols").addEventListener("change", function(e){
+  state.cols = e.target.value;
+  if(state.cols !== "custom") $("gridPop").hidden = true;
+  refreshGrid();
+  if(state.mode === "overlay") composeAll();
+});
+
+/* 自訂欄×列的齒輪面板 */
+function updateGridHint(){
+  var c = clamp(parseInt($("gCols").value,10)||1, 1, 12);
+  var r = clamp(parseInt($("gRows").value,10)||1, 1, 12);
+  var cap = c * r, n = docs.length;
+  var msg = c + " 欄 × " + r + " 列 = " + cap + " 格";
+  if(n > cap) msg += "  ⚠ 目前 " + n + " 份,會有 " + (n-cap) + " 份放不下";
+  else if(n > 0 && n < cap) msg += "  ·  " + (cap-n) + " 格留空";
+  $("gHint").textContent = msg;
+}
+function toggleGridPop(show){
+  var p = $("gridPop");
+  p.hidden = (show === undefined) ? !p.hidden : !show;
+  if(!p.hidden){
+    // 開啟時帶入目前值
+    if(state.cols === "custom"){ $("gCols").value = state.gridCols; $("gRows").value = state.gridRows; }
+    updateGridHint();
+    setTimeout(function(){ $("gCols").focus(); $("gCols").select(); }, 0);
+  }
+}
+$("gridGear").addEventListener("click", function(e){ e.stopPropagation(); toggleGridPop(); });
+$("gCols").addEventListener("input", updateGridHint);
+$("gRows").addEventListener("input", updateGridHint);
+function applyGrid(){
+  state.gridCols = clamp(parseInt($("gCols").value,10)||1, 1, 12);
+  state.gridRows = clamp(parseInt($("gRows").value,10)||1, 1, 12);
+  state.cols = "custom";
+  var opt = $("cols").querySelector('option[value="custom"]');
+  if(opt){ opt.hidden = false; opt.textContent = state.gridCols + "×" + state.gridRows + " 自訂"; }
+  $("cols").value = "custom";
+  $("gridPop").hidden = true;
+  refreshGrid();
+  if(state.mode === "overlay") composeAll();
+}
+$("gApply").addEventListener("click", applyGrid);
+$("gRows").addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); applyGrid(); } });
+$("gCols").addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); applyGrid(); } });
+/* 點面板外面關閉 */
+document.addEventListener("click", function(e){
+  var p = $("gridPop");
+  if(p.hidden) return;
+  if(!p.contains(e.target) && e.target !== $("gridGear") && !$("gridGear").contains(e.target)) p.hidden = true;
+});
+
 $("sync").addEventListener("change", function(e){ state.sync = e.target.checked; if(state.sync) syncNow(); });
 
 function curScale(){
   if(state.zoom !== "fit") return state.zoom;
   var b = baseDoc();
-  return b && b.scale ? b.scale : 1;
+  return b && b.scales && b.scales.length ? (b.scales[posOf(b).i] || 1) : 1;
+}
+/* 更新縮放輸入框:fit 模式顯示實際換算出的百分比(但標記為 fit,灰字) */
+function updateZoomBox(){
+  var box = $("zoomInput").parentElement;
+  var pct = Math.round((state.zoom === "fit" ? curScale() : state.zoom) * 100);
+  if(document.activeElement !== $("zoomInput")) $("zoomInput").value = pct;
+  box.classList.toggle("fit", state.zoom === "fit");
 }
 function setZoom(z){
   state.zoom = z;
-  $("zoomRead").textContent = z === "fit" ? "符合寬度" : Math.round(z*100) + "%";
   if(state.mode === "overlay"){ composeAll(); }
   else { relayoutAll(); syncNow(); }
+  updateZoomBox();
 }
 $("zoomIn").addEventListener("click", function(){ setZoom(clamp(curScale()*1.25, 0.1, 6)); });
 $("zoomOut").addEventListener("click", function(){ setZoom(clamp(curScale()/1.25, 0.1, 6)); });
 $("zoomFit").addEventListener("click", function(){ setZoom("fit"); });
+function applyZoomInput(){
+  var v = parseInt($("zoomInput").value, 10);
+  if(isNaN(v)) { updateZoomBox(); return; }
+  v = clamp(v, 10, 600);
+  setZoom(v / 100);
+}
+$("zoomInput").addEventListener("change", applyZoomInput);
+$("zoomInput").addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); applyZoomInput(); $("zoomInput").blur(); } });
 
 $("pgPrev").addEventListener("click", function(){ state.page--; composeAll(); });
 $("pgNext").addEventListener("click", function(){ state.page++; composeAll(); });
@@ -1009,6 +1159,7 @@ window.addEventListener("resize", function(){
   }, 200);
 });
 
+updateZoomBox();
 if(!pdfjsLib) setStatus("PDF 元件沒載入成功——第一次開啟需要連上網路，之後就都在本機跑。");
 })();
 </script>
