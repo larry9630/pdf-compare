@@ -12,7 +12,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>套版比對台 · 多檔 PDF 差異檢查</title>
-<script src="pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
 :root{
   --ink:#141920; --chrome:#1B222B; --raise:#232C37; --line:#303B48;
@@ -232,7 +232,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
 (function(){
 "use strict";
 var pdfjsLib = window.pdfjsLib;
-if(pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc = "pdf.worker.min.js"; }
+if(pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; }
 
 var $ = function(id){ return document.getElementById(id); };
 var clamp = function(v,a,b){ return Math.max(a, Math.min(b, v)); };
