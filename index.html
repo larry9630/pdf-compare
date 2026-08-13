@@ -54,6 +54,17 @@ input.num{width:48px;text-align:center;font-family:var(--font-mono)}
 .poprow+.poprow{margin-top:9px}
 .poprow.end{justify-content:flex-end}
 .pophint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;font-family:var(--font-mono)}
+.swatch{display:block;width:14px;height:14px;border-radius:3px;border:1px solid rgba(255,255,255,.35);background:#FF3B30;margin:0 auto}
+.dot{width:20px;height:20px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+.dot[aria-pressed="true"]{border-color:#fff}
+input[type=color]{width:32px;height:26px;padding:0;border:1px solid var(--line);border-radius:5px;background:var(--raise);cursor:pointer}
+input[type=color]::-webkit-color-swatch-wrapper{padding:2px}
+input[type=color]::-webkit-color-swatch{border:0;border-radius:3px}
+input.num.hex{width:78px;text-transform:uppercase;font-size:12px}
+.ink{position:absolute;inset:0;z-index:3;pointer-events:none}
+.pg canvas.ink{background:transparent}
+.inkmode .scroll{cursor:crosshair}
+.inkmode .pg{touch-action:none}
 .switch{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none}
 .switch input{appearance:none;width:32px;height:18px;border-radius:9px;background:#39434F;position:relative;cursor:pointer;transition:background .18s;margin:0}
 .switch input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--muted);transition:transform .18s,background .18s}
@@ -184,6 +195,28 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
     </div>
 
     <button class="btn" id="textBtn">文字差異</button>
+    <div class="group" style="position:relative">
+      <span class="lab">標記</span>
+      <div class="seg" id="inkSeg">
+        <button data-ink="off" aria-pressed="true" title="關閉標記(可正常捲動)">關</button>
+        <button data-ink="pen" aria-pressed="false" title="自由畫筆">筆</button>
+        <button data-ink="hl" aria-pressed="false" title="螢光筆(半透明)">螢</button>
+        <button data-ink="rect" aria-pressed="false" title="方框">框</button>
+        <button data-ink="arrow" aria-pressed="false" title="箭頭">箭</button>
+      </div>
+      <button class="btn sq" id="inkColorBtn" title="顏色與粗細"><span id="inkSwatch" class="swatch"></span></button>
+      <div class="pop" id="inkPop" hidden>
+        <div class="poprow" id="inkColors"></div>
+        <div class="poprow">
+          <span class="lab">自訂</span>
+          <input type="color" id="inkCustom" value="#FF3B30" title="點開挑任何顏色">
+          <input class="num hex" type="text" id="inkHex" value="#FF3B30" maxlength="7" spellcheck="false" title="也可以直接輸入色碼,例如 #1E9EC9">
+        </div>
+        <div class="poprow"><span class="lab">粗細</span><input type="range" id="inkSize" min="1" max="20" value="3" style="flex:1"><span class="readout" id="inkSizeRead">3</span></div>
+      </div>
+      <button class="btn sq" id="inkUndo" title="復原上一筆(Ctrl+Z)">↶</button>
+      <button class="btn sq" id="inkClear" title="清除這一格的標記">⌫</button>
+    </div>
     <div class="group">
       <span class="lab">截圖</span>
       <button class="btn" id="shotCopy" title="把目前畫面複製成圖片">複製</button>
@@ -335,6 +368,7 @@ function buildPane(d){
   });
   d.scroll.addEventListener("scroll", function(){ onScroll(d); });
   addPan(d.scroll);
+  inkAttach(d);
   $("grid").appendChild(pane);
 }
 
@@ -342,6 +376,7 @@ function addPan(el){
   var on = false, sx = 0, sy = 0, ol = 0, ot = 0;
   el.addEventListener("pointerdown", function(e){
     if(e.button !== 0) return;
+    if(typeof inkOn === "function" && inkOn()) return;   // 標記模式下不平移
     var r = el.getBoundingClientRect();
     if(e.clientX > r.left + el.clientWidth || e.clientY > r.top + el.clientHeight) return;
     on = true; sx = e.clientX; sy = e.clientY;
@@ -473,6 +508,7 @@ function applyScale(d){
   measure(d);
   updateInd(d);
   schedulePaint(d);
+  if(typeof inkRefresh === "function") inkRefresh(d);
 }
 
 function measure(d){
@@ -540,9 +576,11 @@ function paint(d, wrap){
     wrap._task = task;
     return task.promise.then(function(){
       if((d.scales ? d.scales[i] : 1) !== scale) return;
-      var old = wrap.querySelector("canvas");
+      var old = wrap.querySelector("canvas:not(.ink)");
       if(old) wrap.removeChild(old);
-      wrap.appendChild(cv);
+      var inkLayer = wrap.querySelector("canvas.ink");
+      if(inkLayer) wrap.insertBefore(cv, inkLayer);   // 頁面畫在標記底下
+      else wrap.appendChild(cv);
       wrap._done = true;
       wrap._scale = scale;
     });
@@ -554,7 +592,7 @@ function paint(d, wrap){
 
 function clear(wrap){
   if(wrap._task){ try{ wrap._task.cancel(); }catch(e){} wrap._task = null; }
-  var cv = wrap.querySelector("canvas");
+  var cv = wrap.querySelector("canvas:not(.ink)");
   if(cv) wrap.removeChild(cv);
   wrap._done = false; wrap._scale = 0;
 }
@@ -891,6 +929,183 @@ function runDiff(){
   });
 }
 
+/* ================= 標記 / 塗鴉 =================
+ * 筆畫以「頁面正規化座標(0~1)」儲存,因此縮放、換排版、捲動重繪都不會跑掉。
+ * 資料結構:d.ink[pageIndex] = [ {tool,color,size,pts:[{x,y},...]}, ... ] */
+var ink = { tool:"off", color:"#FF3B30", size:3, drawing:null, seq:0 };
+var INK_COLORS = ["#FF3B30","#FF9500","#FFD400","#34C759","#0A84FF","#AF52DE","#111111","#FFFFFF"];
+
+function inkOn(){ return ink.tool !== "off"; }
+function inkStore(d, i){
+  if(!d.ink) d.ink = {};
+  if(!d.ink[i]) d.ink[i] = [];
+  return d.ink[i];
+}
+
+function inkCanvas(w){
+  var c = w.querySelector("canvas.ink");
+  if(!c){
+    c = document.createElement("canvas");
+    c.className = "ink";
+    w.appendChild(c);
+  }
+  return c;
+}
+
+function inkRedraw(d, i){
+  var w = d.wraps && d.wraps[i];
+  if(!w) return;
+  var strokes = (d.ink && d.ink[i]) || [];
+  var cw = w.clientWidth, ch = w.clientHeight;
+  if(cw < 1 || ch < 1) return;
+  var drawingHere = ink.drawing && ink.drawing.d === d && ink.drawing.i === i;
+  if(!strokes.length && !drawingHere){
+    var old = w.querySelector("canvas.ink"); if(old) old.remove();
+    return;
+  }
+  var c = inkCanvas(w);
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if(c.width !== Math.floor(cw*dpr) || c.height !== Math.floor(ch*dpr)){
+    c.width = Math.floor(cw*dpr); c.height = Math.floor(ch*dpr);
+  }
+  c.style.width = cw + "px"; c.style.height = ch + "px";
+  var x = c.getContext("2d");
+  x.setTransform(dpr,0,0,dpr,0,0);
+  x.clearRect(0,0,cw,ch);
+  strokes.forEach(function(s){ inkDrawStroke(x, s, cw, ch); });
+  if(drawingHere) inkDrawStroke(x, ink.drawing.s, cw, ch);
+}
+
+function inkDrawStroke(x, s, cw, ch){
+  var p = s.pts;
+  if(!p || !p.length) return;
+  x.save();
+  x.lineCap = "round"; x.lineJoin = "round";
+  x.strokeStyle = s.color; x.fillStyle = s.color;
+  x.lineWidth = Math.max(0.5, s.size * (cw / 800));
+  if(s.tool === "hl"){ x.globalAlpha = 0.35; x.lineWidth *= 5; }
+  var X = function(v){ return v * cw; }, Y = function(v){ return v * ch; };
+
+  if(s.tool === "pen" || s.tool === "hl"){
+    x.beginPath();
+    x.moveTo(X(p[0].x), Y(p[0].y));
+    for(var k=1;k<p.length;k++) x.lineTo(X(p[k].x), Y(p[k].y));
+    if(p.length === 1) x.lineTo(X(p[0].x)+0.1, Y(p[0].y));
+    x.stroke();
+  } else if(s.tool === "rect"){
+    if(p.length < 2){ x.restore(); return; }
+    var a = p[0], b = p[p.length-1];
+    x.strokeRect(X(Math.min(a.x,b.x)), Y(Math.min(a.y,b.y)), Math.abs(X(b.x)-X(a.x)), Math.abs(Y(b.y)-Y(a.y)));
+  } else if(s.tool === "arrow"){
+    if(p.length < 2){ x.restore(); return; }
+    var a2 = p[0], b2 = p[p.length-1];
+    var x1=X(a2.x), y1=Y(a2.y), x2=X(b2.x), y2=Y(b2.y);
+    x.beginPath(); x.moveTo(x1,y1); x.lineTo(x2,y2); x.stroke();
+    var ang = Math.atan2(y2-y1, x2-x1);
+    var hl = Math.max(8, x.lineWidth * 3.2);
+    x.beginPath();
+    x.moveTo(x2, y2);
+    x.lineTo(x2 - hl*Math.cos(ang - Math.PI/7), y2 - hl*Math.sin(ang - Math.PI/7));
+    x.lineTo(x2 - hl*Math.cos(ang + Math.PI/7), y2 - hl*Math.sin(ang + Math.PI/7));
+    x.closePath(); x.fill();
+  }
+  x.restore();
+}
+
+function inkRefresh(d){
+  if(!d.wraps) return;
+  for(var i=0;i<d.wraps.length;i++) inkRedraw(d, i);
+}
+function inkRefreshAll(){ docs.forEach(inkRefresh); }
+
+function inkHit(d, e){
+  for(var i=0;i<d.wraps.length;i++){
+    var w = d.wraps[i];
+    var r = w.getBoundingClientRect();
+    if(r.width < 1) continue;
+    if(e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom){
+      return { i:i, x:(e.clientX - r.left)/r.width, y:(e.clientY - r.top)/r.height };
+    }
+  }
+  return null;
+}
+
+function inkAttach(d){
+  var el = d.scroll;
+  el.addEventListener("pointerdown", function(e){
+    if(!inkOn() || e.button !== 0) return;
+    var h = inkHit(d, e);
+    if(!h) return;
+    e.preventDefault(); e.stopPropagation();
+    ink.drawing = { d:d, i:h.i, s:{ tool:ink.tool, color:ink.color, size:ink.size, pts:[{x:h.x,y:h.y}], t:++ink.seq } };
+    try{ el.setPointerCapture(e.pointerId); }catch(err){}
+    inkRedraw(d, h.i);
+  }, true);
+  el.addEventListener("pointermove", function(e){
+    if(!ink.drawing || ink.drawing.d !== d) return;
+    var w = d.wraps[ink.drawing.i];
+    if(!w) return;
+    e.preventDefault(); e.stopPropagation();
+    var r = w.getBoundingClientRect();
+    var pt = { x:(e.clientX - r.left)/r.width, y:(e.clientY - r.top)/r.height };
+    var s = ink.drawing.s;
+    if(s.tool === "pen" || s.tool === "hl"){
+      var last = s.pts[s.pts.length-1];
+      if(Math.abs(pt.x-last.x) + Math.abs(pt.y-last.y) < 0.0015) return;
+      s.pts.push(pt);
+    } else {
+      s.pts[1] = pt;
+    }
+    inkRedraw(d, ink.drawing.i);
+  }, true);
+  function finish(e){
+    if(!ink.drawing || ink.drawing.d !== d) return;
+    var s = ink.drawing.s, i = ink.drawing.i;
+    ink.drawing = null;
+    var keep = (s.pts.length >= 2) || (s.tool === "pen" || s.tool === "hl");
+    if(keep) inkStore(d, i).push(s);
+    inkRedraw(d, i);
+    updateInkButtons();
+  }
+  el.addEventListener("pointerup", finish, true);
+  el.addEventListener("pointercancel", finish, true);
+}
+
+function inkUndo(){
+  var target = null;
+  docs.forEach(function(d){
+    if(!d.ink) return;
+    Object.keys(d.ink).forEach(function(k){
+      var arr = d.ink[k];
+      if(arr && arr.length){
+        var last = arr[arr.length-1];
+        if(!target || (last.t||0) > (target.last.t||0)) target = { d:d, i:+k, last:last };
+      }
+    });
+  });
+  if(!target) return;
+  target.d.ink[target.i].pop();
+  inkRedraw(target.d, target.i);
+  updateInkButtons();
+}
+function inkClearAll(){
+  docs.forEach(function(d){ d.ink = {}; inkRefresh(d); });
+  updateInkButtons();
+}
+function inkCount(){
+  var n = 0;
+  docs.forEach(function(d){
+    if(!d.ink) return;
+    Object.keys(d.ink).forEach(function(k){ n += (d.ink[k]||[]).length; });
+  });
+  return n;
+}
+function updateInkButtons(){
+  var n = inkCount();
+  $("inkUndo").disabled = n === 0;
+  $("inkClear").disabled = n === 0;
+}
+
 /* ================= screenshot ================= */
 var toastT;
 function toast(msg){
@@ -1136,6 +1351,86 @@ $("pgNext").addEventListener("click", function(){ state.page++; composeAll(); })
 $("pgNum").addEventListener("change", function(e){ state.page = parseInt(e.target.value, 10) || 1; composeAll(); });
 
 $("textBtn").addEventListener("click", openDiff);
+
+/* ---- 標記工具列 ---- */
+(function initInkUI(){
+  var pal = $("inkColors");
+  INK_COLORS.forEach(function(col){
+    var b = document.createElement("button");
+    b.className = "dot";
+    b.style.background = col;
+    b.dataset.col = col;
+    b.setAttribute("aria-pressed", String(col === ink.color));
+    b.title = col;
+    pal.appendChild(b);
+  });
+  function setInkColor(col, from){
+    ink.color = col;
+    Array.prototype.forEach.call(pal.children, function(x){
+      x.setAttribute("aria-pressed", String(x.dataset.col.toUpperCase() === col.toUpperCase()));
+    });
+    $("inkSwatch").style.background = col;
+    if(from !== "picker") $("inkCustom").value = col;
+    if(from !== "hex") $("inkHex").value = col.toUpperCase();
+  }
+
+  pal.addEventListener("click", function(e){
+    var b = e.target.closest("button");
+    if(!b) return;
+    setInkColor(b.dataset.col, "preset");
+  });
+  $("inkSwatch").style.background = ink.color;
+
+  /* 自訂顏色:系統色票 + 直接輸入色碼 */
+  $("inkCustom").addEventListener("input", function(e){ setInkColor(e.target.value, "picker"); });
+  $("inkHex").addEventListener("change", function(e){
+    var v = e.target.value.trim();
+    if(v && v[0] !== "#") v = "#" + v;
+    // 支援 #RGB 縮寫
+    if(/^#[0-9a-fA-F]{3}$/.test(v)){
+      v = "#" + v[1]+v[1] + v[2]+v[2] + v[3]+v[3];
+    }
+    if(/^#[0-9a-fA-F]{6}$/.test(v)) setInkColor(v, "hex");
+    else $("inkHex").value = ink.color.toUpperCase();   // 打錯就還原
+  });
+  $("inkHex").addEventListener("keydown", function(e){
+    if(e.key === "Enter"){ e.preventDefault(); e.target.blur(); }
+  });
+
+  $("inkSize").addEventListener("input", function(e){
+    ink.size = parseInt(e.target.value,10) || 3;
+    $("inkSizeRead").textContent = ink.size;
+  });
+
+  $("inkColorBtn").addEventListener("click", function(e){
+    e.stopPropagation();
+    var p = $("inkPop");
+    p.hidden = !p.hidden;
+    if(!p.hidden) $("gridPop").hidden = true;
+  });
+  document.addEventListener("click", function(e){
+    var p = $("inkPop");
+    if(p.hidden) return;
+    if(!p.contains(e.target) && !$("inkColorBtn").contains(e.target)) p.hidden = true;
+  });
+
+  $("inkSeg").addEventListener("click", function(e){
+    var b = e.target.closest("button");
+    if(!b) return;
+    ink.tool = b.dataset.ink;
+    Array.prototype.forEach.call($("inkSeg").children, function(x){
+      x.setAttribute("aria-pressed", String(x.dataset.ink === ink.tool));
+    });
+    document.body.classList.toggle("inkmode", inkOn());
+    if(inkOn()) setStatus("標記模式:在頁面上拖曳即可畫。切到「關」才能拖曳平移。");
+  });
+
+  $("inkUndo").addEventListener("click", inkUndo);
+  $("inkClear").addEventListener("click", function(){
+    if(inkCount() && confirm("確定清除所有標記?")) inkClearAll();
+  });
+  updateInkButtons();
+})();
 $("shotCopy").addEventListener("click", copyShot);
 $("shotSave").addEventListener("click", saveShot);
 $("diffRun").addEventListener("click", runDiff);
@@ -1145,7 +1440,9 @@ $("diffClose").addEventListener("click", function(){ $("drawer").hidden = true; 
 $("clearBtn").addEventListener("click", clearAll);
 
 document.addEventListener("keydown", function(e){
-  if(state.mode !== "overlay" || /INPUT|SELECT/.test(e.target.tagName)) return;
+  if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"){ e.preventDefault(); inkUndo(); return; }
+  if(state.mode !== "overlay") return;
   if(e.key === "ArrowRight" || e.key === "PageDown"){ state.page++; composeAll(); e.preventDefault(); }
   if(e.key === "ArrowLeft" || e.key === "PageUp"){ state.page--; composeAll(); e.preventDefault(); }
 });
