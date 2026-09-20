@@ -13,6 +13,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>套版比對台 · 多檔 PDF 差異檢查</title>
 <script src="pdf.min.js"></script>
+<script src="pdf-lib.min.js"></script>
 <style>
 :root{
   --ink:#141920; --chrome:#1B222B; --raise:#232C37; --line:#303B48;
@@ -36,7 +37,6 @@ button,input,select{font:inherit;color:inherit}
 .btn:hover:not(:disabled){border-color:var(--muted)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .btn.sq{width:28px;padding:5px 0;text-align:center;font-family:var(--font-mono)}
-.btn.key{background:#2C3A47;border-color:#3C4C5C}
 .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
 .seg button{background:var(--raise);border:0;padding:5px 11px;cursor:pointer;font-size:13px;color:var(--muted)}
 .seg button+button{border-left:1px solid var(--line)}
@@ -61,9 +61,23 @@ input[type=color]{width:32px;height:26px;padding:0;border:1px solid var(--line);
 input[type=color]::-webkit-color-swatch-wrapper{padding:2px}
 input[type=color]::-webkit-color-swatch{border:0;border-radius:3px}
 input.num.hex{width:78px;text-transform:uppercase;font-size:12px}
+.pop.wide{min-width:270px}
+#inkSyms{flex-wrap:wrap;gap:4px}
+.symbtn{width:30px;height:30px;border-radius:5px;border:1px solid var(--line);background:var(--raise);color:var(--text);cursor:pointer;font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center}
+.symbtn:hover{border-color:var(--muted)}
+.symbtn[aria-pressed="true"]{border-color:var(--cyan);background:#2C3A47}
+.histlist{max-height:190px;overflow:auto;margin:8px 0;border:1px solid var(--line);border-radius:6px}
+.histrow{display:flex;align-items:center;gap:8px;padding:5px 9px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(255,255,255,.05)}
+.histrow:last-child{border-bottom:0}
+.histrow:hover{background:#2C3A47}
+.histrow.undone{opacity:.42}
+.histrow .hdot{width:11px;height:11px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.3)}
+.histrow .hname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.histrow .hidx{font-family:var(--font-mono);font-size:10px;color:var(--muted);flex:none}
 .ink{position:absolute;inset:0;z-index:3;pointer-events:none}
 .pg canvas.ink{background:transparent}
 .inkmode .scroll{cursor:crosshair}
+.selmode .scroll{cursor:default}
 .inkmode .pg{touch-action:none}
 .switch{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none}
 .switch input{appearance:none;width:32px;height:18px;border-radius:9px;background:#39434F;position:relative;cursor:pointer;transition:background .18s;margin:0}
@@ -94,6 +108,7 @@ input.num.hex{width:78px;text-transform:uppercase;font-size:12px}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 
 .empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;color:var(--muted);padding:30px}
+.empty a{color:var(--cyan);text-decoration:underline;cursor:pointer}
 .empty b{color:var(--text);font-size:16px}
 .empty small{font-size:12px;max-width:420px;display:block}
 .stage.over::after{content:"";position:absolute;inset:8px;border:1px dashed var(--cyan);border-radius:10px;background:rgba(30,158,201,.05);pointer-events:none}
@@ -146,7 +161,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
       套版比對台
     </div>
 
-    <label class="btn key">加入 PDF<input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden></label>
+    <input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden>
 
     <div class="group">
       <span class="lab">檢視</span>
@@ -203,6 +218,14 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
         <button data-ink="hl" aria-pressed="false" title="螢光筆(半透明)">螢</button>
         <button data-ink="rect" aria-pressed="false" title="方框">框</button>
         <button data-ink="arrow" aria-pressed="false" title="箭頭">箭</button>
+        <button data-ink="sym" aria-pressed="false" title="符號:圈圈、打勾、叉叉等">符</button>
+        <button data-ink="text" aria-pressed="false" title="文字方塊:點一下即可打字">字</button>
+        <button data-ink="sel" aria-pressed="false" title="選取:點一下選中標記,可拖曳移動、縮放、刪除">選</button>
+      </div>
+      <button class="btn sq" id="inkSymBtn" title="選符號" hidden><span id="inkSymCur">◯</span></button>
+      <div class="pop" id="inkSymPop" hidden>
+        <div class="poprow" id="inkSyms"></div>
+        <div class="pophint">選好符號後,在頁面上點一下或拖曳決定大小。</div>
       </div>
       <button class="btn sq" id="inkColorBtn" title="顏色與粗細"><span id="inkSwatch" class="swatch"></span></button>
       <div class="pop" id="inkPop" hidden>
@@ -214,13 +237,20 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
         </div>
         <div class="poprow"><span class="lab">粗細</span><input type="range" id="inkSize" min="1" max="20" value="3" style="flex:1"><span class="readout" id="inkSizeRead">3</span></div>
       </div>
-      <button class="btn sq" id="inkUndo" title="復原上一筆(Ctrl+Z)">↶</button>
-      <button class="btn sq" id="inkClear" title="清除這一格的標記">⌫</button>
+      <button class="btn sq" id="inkUndo" title="上一步(Ctrl+Z)">↶</button>
+      <button class="btn sq" id="inkRedo" title="下一步(Ctrl+Y)">↷</button>
+      <button class="btn sq" id="inkHistBtn" title="歷程:一次跳回多步">☰</button>
+      <div class="pop wide" id="inkHistPop" hidden>
+        <div class="pophint" id="inkHistHint">尚無標記。</div>
+        <div class="histlist" id="inkHistList"></div>
+        <div class="poprow end"><button class="btn" id="inkClear">全部清除</button></div>
+      </div>
     </div>
     <div class="group">
       <span class="lab">截圖</span>
       <button class="btn" id="shotCopy" title="把目前畫面複製成圖片">複製</button>
       <button class="btn" id="shotSave" title="把目前畫面存成 PNG">存 PNG</button>
+      <button class="btn" id="exportPdf" title="把所有文件合併成一份 PDF,標記一併燒錄進去">匯出 PDF</button>
     </div>
     <button class="btn" id="clearBtn">全部清除</button>
   </header>
@@ -229,8 +259,8 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
     <div class="grid" id="grid"></div>
     <div class="grid" id="ovlGrid" hidden></div>
     <div class="empty" id="emptyState">
-      <b>把 5～10 份 PDF 一次拖進來</b>
-      <small>第一份會自動當基準檔，其他都跟它比。點左上角的編號可以改指定基準。檔案不會離開這台電腦。</small>
+      <b>把 PDF 拖進來</b>
+      <small>一次可放多份。第一份會自動當基準檔，其他都跟它比。點左上角的編號可以改指定基準。<br>也可以<a href="#" id="browseLink">點這裡選擇檔案</a>。檔案不會離開這台電腦。</small>
     </div>
 
     <aside class="drawer" id="drawer" hidden>
@@ -302,6 +332,8 @@ function loadOne(file){
   buildPane(d);
   refreshGrid();
   file.arrayBuffer().then(function(buf){
+    // 保留一份原始位元組供匯出使用(pdf.js 會接管傳入的 buffer)
+    d._bytes = buf.slice(0);
     return pdfjsLib.getDocument({ data: buf }).promise;
   }).then(function(pdf){
     d.doc = pdf;
@@ -375,8 +407,12 @@ function buildPane(d){
 function addPan(el){
   var on = false, sx = 0, sy = 0, ol = 0, ot = 0;
   el.addEventListener("pointerdown", function(e){
-    if(e.button !== 0) return;
-    if(typeof inkOn === "function" && inkOn()) return;   // 標記模式下不平移
+    // 左鍵:標記模式下讓給畫筆;右鍵(或中鍵):一律用來拖曳平移
+    var right = (e.button === 2 || e.button === 1);
+    if(!right){
+      if(e.button !== 0) return;
+      if(typeof inkOn === "function" && inkOn()) return;
+    }
     var r = el.getBoundingClientRect();
     if(e.clientX > r.left + el.clientWidth || e.clientY > r.top + el.clientHeight) return;
     on = true; sx = e.clientX; sy = e.clientY;
@@ -392,6 +428,8 @@ function addPan(el){
   ["pointerup","pointercancel","pointerleave"].forEach(function(ev){
     el.addEventListener(ev, function(){ on = false; el.classList.remove("grabbing"); });
   });
+  // 右鍵用來拖曳平移,因此在頁面區域內不要跳出瀏覽器選單
+  el.addEventListener("contextmenu", function(e){ e.preventDefault(); });
 }
 
 function setBase(id){
@@ -408,6 +446,17 @@ function removeDoc(id){
   if(d.io) d.io.disconnect();
   d.el.remove();
   docs.splice(i, 1);
+  // 一併清掉這份文件的標記歷程,避免下拉清單出現孤兒項目
+  if(typeof inkHist === "object"){
+    var before = inkHist.items.length;
+    var removedBeforePos = 0;
+    inkHist.items = inkHist.items.filter(function(it, idx){
+      if(it.d === d){ if(idx < inkHist.pos) removedBeforePos++; return false; }
+      return true;
+    });
+    if(before !== inkHist.items.length) inkHist.pos = Math.max(0, inkHist.pos - removedBeforePos);
+    if(typeof updateInkButtons === "function") updateInkButtons();
+  }
   if(state.baseId === id) state.baseId = docs.length ? docs[0].id : null;
   docs.forEach(function(x){ x.el.classList.toggle("base", x.id === state.baseId); });
   refreshGrid(); refreshMeta();
@@ -932,10 +981,144 @@ function runDiff(){
 /* ================= 標記 / 塗鴉 =================
  * 筆畫以「頁面正規化座標(0~1)」儲存,因此縮放、換排版、捲動重繪都不會跑掉。
  * 資料結構:d.ink[pageIndex] = [ {tool,color,size,pts:[{x,y},...]}, ... ] */
-var ink = { tool:"off", color:"#FF3B30", size:3, drawing:null, seq:0 };
+var ink = { tool:"off", color:"#FF3B30", size:3, drawing:null, seq:0, sym:"circle" };
 var INK_COLORS = ["#FF3B30","#FF9500","#FFD400","#34C759","#0A84FF","#AF52DE","#111111","#FFFFFF"];
+/* 可用符號:圖示、名稱 */
+var INK_SYMS = [
+  { id:"circle", g:"◯", name:"圈圈" },
+  { id:"check",  g:"✓", name:"打勾" },
+  { id:"cross",  g:"✕", name:"叉叉" },
+  { id:"star",   g:"★", name:"星號" },
+  { id:"excl",   g:"!", name:"驚嘆號" },
+  { id:"quest",  g:"?", name:"問號" },
+  { id:"tri",    g:"△", name:"三角警示" },
+  { id:"dot",    g:"●", name:"實心點" }
+];
+/* 全域操作歷程:每畫一筆就 push,支援上一步/下一步與一次跳多步 */
+var inkHist = { items:[], pos:0 };   // pos = 目前生效到第幾筆(0 表示全部復原)
+/* 選取狀態:被選中的筆畫,以及拖曳中的動作 */
+var inkSel = { d:null, i:-1, s:null, drag:null };
+
+/* 取得一筆標記的邊界(正規化座標) */
+function inkBounds(s){
+  var xs = s.pts.map(function(p){ return p.x; });
+  var ys = s.pts.map(function(p){ return p.y; });
+  var b = { x0:Math.min.apply(null,xs), x1:Math.max.apply(null,xs),
+            y0:Math.min.apply(null,ys), y1:Math.max.apply(null,ys) };
+  // 符號單點放置時,以預設大小給一個方框(拖曳放置時就是拖出來的框)
+  if(s.tool === "sym" && s.pts.length < 2){
+    var r = 0.04 * Math.max(1, s.size/3);
+    b = { x0:s.pts[0].x-r, x1:s.pts[0].x+r, y0:s.pts[0].y-r*1.3, y1:s.pts[0].y+r*1.3 };
+  }
+  // 文字方塊:依字數與行數估算範圍(供選取框使用)
+  if(s.tool === "text"){
+    var lines2 = String(s.text || "").split("\n");
+    var longest = 0;
+    lines2.forEach(function(l){ longest = Math.max(longest, l.length); });
+    var fsN = (s.fsize || 16) / 800;                 // 正規化字高(以頁寬為基準)
+    var wN = Math.max(0.02, longest * fsN * 0.62);
+    var hN = Math.max(0.02, lines2.length * fsN * 1.35 * (s._ar || 1.3));
+    b = { x0:s.pts[0].x, x1:s.pts[0].x + wN, y0:s.pts[0].y, y1:s.pts[0].y + hN };
+  }
+  return b;
+}
+
+/* 點擊是否落在某筆標記上(含一點容差) */
+function inkHitStroke(s, x, y, tol){
+  var b = inkBounds(s);
+  if(x < b.x0-tol || x > b.x1+tol || y < b.y0-tol || y > b.y1+tol) return false;
+  if(s.tool === "rect" || s.tool === "sym") return true;
+  if(s.tool === "arrow" || s.tool === "pen" || s.tool === "hl"){
+    // 逐段量點到線的距離
+    for(var k=0;k<s.pts.length-1;k++){
+      if(inkDistToSeg(x,y,s.pts[k],s.pts[k+1]) < tol) return true;
+    }
+    if(s.pts.length === 1){
+      var dx=x-s.pts[0].x, dy=y-s.pts[0].y;
+      return Math.sqrt(dx*dx+dy*dy) < tol;
+    }
+    return false;
+  }
+  return true;
+}
+function inkDistToSeg(px,py,a,b){
+  var vx=b.x-a.x, vy=b.y-a.y, wx=px-a.x, wy=py-a.y;
+  var L=vx*vx+vy*vy;
+  var t = L > 0 ? Math.max(0, Math.min(1, (wx*vx+wy*vy)/L)) : 0;
+  var dx=px-(a.x+t*vx), dy=py-(a.y+t*vy);
+  return Math.sqrt(dx*dx+dy*dy);
+}
+
+/* 找出某頁最上層(最後畫的)被點到的標記 */
+function inkPick(d, i, x, y){
+  var arr = (d.ink && d.ink[i]) || [];
+  for(var k=arr.length-1;k>=0;k--){
+    var s = arr[k];
+    if(s.seq > inkHist.pos) continue;         // 已被復原的不算
+    if(inkHitStroke(s, x, y, 0.012)) return s;
+  }
+  return null;
+}
+
+/* 位移整筆標記 */
+function inkMove(s, dx, dy){
+  s.pts.forEach(function(p){ p.x += dx; p.y += dy; });
+}
+/* 以邊界框為基準縮放整筆標記 */
+function inkScale(s, fx, fy, ox, oy){
+  s.pts.forEach(function(p){
+    p.x = ox + (p.x - ox) * fx;
+    p.y = oy + (p.y - oy) * fy;
+  });
+}
+function inkClearSel(){
+  if(!inkSel.s) return;
+  var d = inkSel.d, i = inkSel.i;
+  inkSel = { d:null, i:-1, s:null, drag:null };
+  if(d) inkRedraw(d, i);
+  // 若是右鍵臨時切到選取模式,取消選取後自動回到原本的畫圖工具
+  if(ink.prevTool && ink.tool === "sel"){
+    ink.tool = ink.prevTool;
+    ink.prevTool = null;
+    syncInkToolButtons();
+  }
+}
+function inkDeleteSel(){
+  if(!inkSel.s) return;
+  var d = inkSel.d, i = inkSel.i, s = inkSel.s;
+  var arr = d.ink && d.ink[i];
+  if(arr){
+    var idx = arr.indexOf(s);
+    if(idx >= 0) arr.splice(idx, 1);
+  }
+  // 同步移出歷程
+  for(var k=0;k<inkHist.items.length;k++){
+    if(inkHist.items[k].s === s){
+      inkHist.items.splice(k,1);
+      if(k < inkHist.pos) inkHist.pos--;
+      break;
+    }
+  }
+  // 重新編號,保持 seq 與歷程一致
+  inkHist.items.forEach(function(it, n){ it.s.seq = n + 1; });
+  inkSel = { d:null, i:-1, s:null, drag:null };
+  inkRedraw(d, i);
+  updateInkButtons();
+}
 
 function inkOn(){ return ink.tool !== "off"; }
+/* 程式內切換工具時,同步工具列按鈕與游標狀態 */
+function syncInkToolButtons(){
+  var seg = $("inkSeg");
+  if(!seg) return;
+  Array.prototype.forEach.call(seg.children, function(x){
+    x.setAttribute("aria-pressed", String(x.dataset.ink === ink.tool));
+  });
+  document.body.classList.toggle("inkmode", inkOn());
+  document.body.classList.toggle("selmode", ink.tool === "sel");
+  var sb = $("inkSymBtn");
+  if(sb) sb.hidden = (ink.tool !== "sym");
+}
 function inkStore(d, i){
   if(!d.ink) d.ink = {};
   if(!d.ink[i]) d.ink[i] = [];
@@ -959,7 +1142,8 @@ function inkRedraw(d, i){
   var cw = w.clientWidth, ch = w.clientHeight;
   if(cw < 1 || ch < 1) return;
   var drawingHere = ink.drawing && ink.drawing.d === d && ink.drawing.i === i;
-  if(!strokes.length && !drawingHere){
+  var live = strokes.filter(function(s){ return s.seq <= inkHist.pos; });
+  if(!live.length && !drawingHere){
     var old = w.querySelector("canvas.ink"); if(old) old.remove();
     return;
   }
@@ -972,8 +1156,30 @@ function inkRedraw(d, i){
   var x = c.getContext("2d");
   x.setTransform(dpr,0,0,dpr,0,0);
   x.clearRect(0,0,cw,ch);
-  strokes.forEach(function(s){ inkDrawStroke(x, s, cw, ch); });
+  live.forEach(function(s){ inkDrawStroke(x, s, cw, ch); });
   if(drawingHere) inkDrawStroke(x, ink.drawing.s, cw, ch);
+  // 選取框
+  if(inkSel.s && inkSel.d === d && inkSel.i === i){
+    var b = inkBounds(inkSel.s);
+    var pad = 6;
+    var bx = b.x0*cw - pad, by = b.y0*ch - pad;
+    var bw = (b.x1-b.x0)*cw + pad*2, bh = (b.y1-b.y0)*ch + pad*2;
+    x.save();
+    x.strokeStyle = "#1E9EC9"; x.lineWidth = 1.5;
+    x.setLineDash([5,4]);
+    x.strokeRect(bx, by, bw, bh);
+    x.setLineDash([]);
+    // 右下角縮放握把
+    x.fillStyle = "#1E9EC9";
+    x.fillRect(bx+bw-5, by+bh-5, 10, 10);
+    x.restore();
+  }
+}
+/* 判斷點是否落在選取框的縮放握把上 */
+function inkOnHandle(s, x, y, cw, ch){
+  var b = inkBounds(s), pad = 6;
+  var hx = b.x1*cw + pad, hy = b.y1*ch + pad;
+  return Math.abs(x*cw - hx) <= 8 && Math.abs(y*ch - hy) <= 8;
 }
 
 function inkDrawStroke(x, s, cw, ch){
@@ -1008,8 +1214,83 @@ function inkDrawStroke(x, s, cw, ch){
     x.lineTo(x2 - hl*Math.cos(ang - Math.PI/7), y2 - hl*Math.sin(ang - Math.PI/7));
     x.lineTo(x2 - hl*Math.cos(ang + Math.PI/7), y2 - hl*Math.sin(ang + Math.PI/7));
     x.closePath(); x.fill();
+  } else if(s.tool === "text"){
+    var fs = Math.max(6, (s.fsize || 16) * (cw/800));
+    x.font = fs + 'px "Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif';
+    x.textBaseline = "top";
+    var lines = String(s.text || "").split("\n");
+    var lh = fs * 1.35;
+    lines.forEach(function(ln, n){
+      x.fillText(ln, X(p[0].x), Y(p[0].y) + n*lh);
+    });
+  } else if(s.tool === "sym"){
+    var a3 = p[0], b3 = p.length > 1 ? p[p.length-1] : null;
+    var cx, cy, rx, ry;
+    if(b3){
+      // 拖曳放置:填滿拖出的方框(兩軸各自算半徑),圖形因此永遠貼合選取框
+      cx = X((a3.x + b3.x)/2); cy = Y((a3.y + b3.y)/2);
+      rx = Math.abs(X(b3.x) - X(a3.x))/2;
+      ry = Math.abs(Y(b3.y) - Y(a3.y))/2;
+    } else {
+      // 單擊放置:大小與 inkBounds 的預設框一致(正規化半徑 r,y 軸 1.3 倍)
+      var rN = 0.04 * Math.max(1, s.size/3);
+      cx = X(a3.x); cy = Y(a3.y);
+      rx = rN * cw;
+      ry = rN * 1.3 * ch;
+    }
+    rx = Math.max(4, rx); ry = Math.max(4, ry);
+    inkDrawSymbol(x, s.sym || "circle", cx, cy, rx, ry);
   }
   x.restore();
+}
+
+/* 畫出各種符號,以「中心點 + 兩軸半徑」定義,因此永遠貼合選取框 */
+function inkDrawSymbol(x, id, cx, cy, rx, ry){
+  var R = Math.min(rx, ry);           // 需要維持比例的細節(點、線寬)用較小者
+  x.beginPath();
+  if(id === "circle"){
+    x.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); x.stroke();
+  } else if(id === "dot"){
+    x.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); x.fill();
+  } else if(id === "cross"){
+    x.moveTo(cx-rx*0.78, cy-ry*0.78); x.lineTo(cx+rx*0.78, cy+ry*0.78);
+    x.moveTo(cx+rx*0.78, cy-ry*0.78); x.lineTo(cx-rx*0.78, cy+ry*0.78);
+    x.stroke();
+  } else if(id === "check"){
+    x.moveTo(cx - rx*0.78, cy + ry*0.05);
+    x.lineTo(cx - rx*0.22, cy + ry*0.64);
+    x.lineTo(cx + rx*0.80, cy - ry*0.64);
+    x.stroke();
+  } else if(id === "star"){
+    for(var k2=0;k2<5;k2++){
+      var a = -Math.PI/2 + k2*2*Math.PI/5;
+      var b = a + Math.PI/5;
+      var px = cx + Math.cos(a)*rx,       py = cy + Math.sin(a)*ry;
+      var qx = cx + Math.cos(b)*rx*0.42,  qy = cy + Math.sin(b)*ry*0.42;
+      if(k2 === 0) x.moveTo(px, py); else x.lineTo(px, py);
+      x.lineTo(qx, qy);
+    }
+    x.closePath(); x.fill();
+  } else if(id === "tri"){
+    x.moveTo(cx, cy - ry);
+    x.lineTo(cx + rx*0.95, cy + ry*0.8);
+    x.lineTo(cx - rx*0.95, cy + ry*0.8);
+    x.closePath(); x.stroke();
+    x.beginPath();
+    x.moveTo(cx, cy - ry*0.3); x.lineTo(cx, cy + ry*0.2); x.stroke();
+    x.beginPath(); x.arc(cx, cy + ry*0.48, Math.max(1, R*0.1), 0, Math.PI*2); x.fill();
+  } else if(id === "excl"){
+    x.lineWidth = Math.max(x.lineWidth, R*0.22);
+    x.moveTo(cx, cy - ry*0.95); x.lineTo(cx, cy + ry*0.34); x.stroke();
+    x.beginPath(); x.arc(cx, cy + ry*0.76, Math.max(1.5, R*0.15), 0, Math.PI*2); x.fill();
+  } else if(id === "quest"){
+    x.lineWidth = Math.max(x.lineWidth, R*0.2);
+    x.ellipse(cx, cy - ry*0.42, rx*0.54, ry*0.42, 0, Math.PI*0.95, Math.PI*0.28, false);
+    x.stroke();
+    x.beginPath();
+    x.moveTo(cx + rx*0.14, cy - ry*0.02); x.lineTo(cx, cy + ry*0.36); x.stroke();
+    x.beginPath(); x.arc(cx - rx*0.02, cy + ry*0.74, Math.max(1.5, R*0.14), 0, Math.PI*2); x.fill();
+  }
 }
 
 function inkRefresh(d){
@@ -1030,18 +1311,148 @@ function inkHit(d, e){
   return null;
 }
 
+/* 將一筆完成的標記寫入資料與歷程(畫筆與文字方塊共用) */
+function inkCommit(d, i, s){
+  if(inkHist.pos < inkHist.items.length){
+    var dropped = inkHist.items.splice(inkHist.pos);
+    dropped.forEach(function(it){
+      var arr = it.d.ink && it.d.ink[it.i];
+      if(arr){
+        var idx = arr.indexOf(it.s);
+        if(idx >= 0) arr.splice(idx, 1);
+      }
+    });
+  }
+  s.seq = inkHist.items.length + 1;
+  inkStore(d, i).push(s);
+  inkHist.items.push({ d:d, i:i, s:s });
+  inkHist.pos = inkHist.items.length;
+  inkRedraw(d, i);
+  updateInkButtons();
+}
+
 function inkAttach(d){
   var el = d.scroll;
   el.addEventListener("pointerdown", function(e){
-    if(!inkOn() || e.button !== 0) return;
+    if(!inkOn()) return;
+
+    // 右鍵:點在圖形上就選取它,點在空白處則讓給平移
+    if(e.button === 2){
+      var hr = inkHit(d, e);
+      if(!hr) return;
+      var picked = inkPick(d, hr.i, hr.x, hr.y);
+      if(!picked) return;                       // 空白處 → 交給 addPan 平移
+      e.preventDefault(); e.stopPropagation();
+      if(ink.tool !== "sel") ink.prevTool = ink.tool;   // 記住原本的畫圖工具
+      ink.tool = "sel";
+      syncInkToolButtons();
+      inkSel = { d:d, i:hr.i, s:picked, drag:null };
+      inkRedraw(d, hr.i);
+      setStatus("已選取:按住左鍵可拖曳移動(可拖到別頁),拉右下角縮放,Delete 刪除。");
+      return;
+    }
+
+    if(e.button !== 0) return;
     var h = inkHit(d, e);
     if(!h) return;
     e.preventDefault(); e.stopPropagation();
-    ink.drawing = { d:d, i:h.i, s:{ tool:ink.tool, color:ink.color, size:ink.size, pts:[{x:h.x,y:h.y}], t:++ink.seq } };
+
+    // 文字方塊:點一下就輸入文字,不需拖曳
+    if(ink.tool === "text"){
+      var txt = prompt("輸入文字(可用 Enter 換行請改用 \\n):", "");
+      if(txt === null || txt === "") return;
+      var w3 = d.wraps[h.i];
+      var ts = { tool:"text", color:ink.color, size:ink.size, fsize:Math.max(8, ink.size * 5),
+                 text:String(txt).replace(/\\n/g, "\n"),
+                 _ar: w3 ? (w3.clientWidth / Math.max(1, w3.clientHeight)) : 1.3,
+                 pts:[{x:h.x, y:h.y}], seq:0 };
+      inkCommit(d, h.i, ts);
+      return;
+    }
+
+    if(ink.tool === "sel"){
+      var w = d.wraps[h.i];
+      var cw = w.clientWidth, ch = w.clientHeight;
+      // 先看是不是抓在已選取項目的縮放握把上
+      if(inkSel.s && inkSel.d === d && inkSel.i === h.i && inkOnHandle(inkSel.s, h.x, h.y, cw, ch)){
+        var b0 = inkBounds(inkSel.s);
+        inkSel.drag = { mode:"resize", ox:b0.x0, oy:b0.y0,
+                        w0:Math.max(1e-4, b0.x1-b0.x0), h0:Math.max(1e-4, b0.y1-b0.y0),
+                        orig: inkSel.s.pts.map(function(p){ return { x:p.x, y:p.y }; }) };
+      } else {
+        var picked = inkPick(d, h.i, h.x, h.y);
+        if(picked){
+          inkSel = { d:d, i:h.i, s:picked, drag:{ mode:"move", lx:h.x, ly:h.y } };
+          setStatus("已選取:拖曳可移動,拉右下角方塊可縮放,按 Delete 刪除。");
+        } else {
+          inkClearSel();
+          inkSel = { d:null, i:-1, s:null, drag:null };
+        }
+      }
+      try{ el.setPointerCapture(e.pointerId); }catch(err){}
+      inkRedraw(d, h.i);
+      return;
+    }
+
+    ink.drawing = { d:d, i:h.i, s:{ tool:ink.tool, color:ink.color, size:ink.size, sym:ink.sym, pts:[{x:h.x,y:h.y}], seq:0 } };
     try{ el.setPointerCapture(e.pointerId); }catch(err){}
     inkRedraw(d, h.i);
   }, true);
   el.addEventListener("pointermove", function(e){
+    // 選取模式:拖曳移動或縮放
+    if(ink.tool === "sel" && inkSel.drag && inkSel.d === d && inkSel.s){
+      var w2 = d.wraps[inkSel.i];
+      if(!w2) return;
+      e.preventDefault(); e.stopPropagation();
+      var r2 = w2.getBoundingClientRect();
+      var px = (e.clientX - r2.left)/r2.width, py = (e.clientY - r2.top)/r2.height;
+
+      // 拖到窗格上下邊緣時自動捲動,方便把標記搬到別頁
+      if(inkSel.drag.mode === "move"){
+        var pr = el.getBoundingClientRect(), EDGE = 48;
+        if(e.clientY < pr.top + EDGE) el.scrollTop -= 14;
+        else if(e.clientY > pr.bottom - EDGE) el.scrollTop += 14;
+      }
+      if(inkSel.drag.mode === "move"){
+        // 若游標移到同一份文件的另一頁,就把這筆標記搬過去
+        var over = inkHit(d, e);
+        if(over && over.i !== inkSel.i){
+          var from = inkSel.i;
+          var arr = d.ink && d.ink[from];
+          if(arr){
+            var ix = arr.indexOf(inkSel.s);
+            if(ix >= 0) arr.splice(ix, 1);
+          }
+          inkStore(d, over.i).push(inkSel.s);
+          // 歷程也指向新的頁碼
+          for(var hk=0; hk<inkHist.items.length; hk++){
+            if(inkHist.items[hk].s === inkSel.s){ inkHist.items[hk].i = over.i; break; }
+          }
+          inkSel.i = over.i;
+          // 以新頁為基準重新對齊:讓標記中心落在游標處
+          var bb = inkBounds(inkSel.s);
+          inkMove(inkSel.s, over.x - (bb.x0+bb.x1)/2, over.y - (bb.y0+bb.y1)/2);
+          inkSel.drag.lx = over.x; inkSel.drag.ly = over.y;
+          inkRedraw(d, from);
+          inkRedraw(d, over.i);
+          if(!$("inkHistPop").hidden) renderInkHist();
+          return;
+        }
+        inkMove(inkSel.s, px - inkSel.drag.lx, py - inkSel.drag.ly);
+        inkSel.drag.lx = px; inkSel.drag.ly = py;
+      } else {
+        var g = inkSel.drag;
+        var fx = Math.max(0.05, (px - g.ox) / g.w0);
+        var fy = Math.max(0.05, (py - g.oy) / g.h0);
+        if(e.shiftKey){ var f = Math.max(fx, fy); fx = f; fy = f; }   // 等比
+        // 一律從「拖曳開始時的原始座標」重算,避免誤差累積
+        inkSel.s.pts = g.orig.map(function(p){
+          return { x: g.ox + (p.x - g.ox) * fx, y: g.oy + (p.y - g.oy) * fy };
+        });
+      }
+      inkRedraw(d, inkSel.i);
+      return;
+    }
     if(!ink.drawing || ink.drawing.d !== d) return;
     var w = d.wraps[ink.drawing.i];
     if(!w) return;
@@ -1059,51 +1470,250 @@ function inkAttach(d){
     inkRedraw(d, ink.drawing.i);
   }, true);
   function finish(e){
+    if(ink.tool === "sel"){
+      if(inkSel.drag){ inkSel.drag = null; if(inkSel.d) inkRedraw(inkSel.d, inkSel.i); }
+      return;
+    }
     if(!ink.drawing || ink.drawing.d !== d) return;
     var s = ink.drawing.s, i = ink.drawing.i;
     ink.drawing = null;
-    var keep = (s.pts.length >= 2) || (s.tool === "pen" || s.tool === "hl");
-    if(keep) inkStore(d, i).push(s);
-    inkRedraw(d, i);
-    updateInkButtons();
+    var keep = (s.pts.length >= 2) || (s.tool === "pen" || s.tool === "hl" || s.tool === "sym");
+    if(keep) inkCommit(d, i, s);
+    else { inkRedraw(d, i); updateInkButtons(); }
   }
   el.addEventListener("pointerup", finish, true);
   el.addEventListener("pointercancel", finish, true);
 }
 
-function inkUndo(){
-  var target = null;
-  docs.forEach(function(d){
-    if(!d.ink) return;
-    Object.keys(d.ink).forEach(function(k){
-      var arr = d.ink[k];
-      if(arr && arr.length){
-        var last = arr[arr.length-1];
-        if(!target || (last.t||0) > (target.last.t||0)) target = { d:d, i:+k, last:last };
-      }
-    });
-  });
-  if(!target) return;
-  target.d.ink[target.i].pop();
-  inkRedraw(target.d, target.i);
+/* 歷程控制:pos 表示「目前生效到第幾筆」。改變 pos 就等於前進/後退。 */
+function inkGoto(pos){
+  pos = Math.max(0, Math.min(inkHist.items.length, pos));
+  if(pos === inkHist.pos) return;
+  inkHist.pos = pos;
+  inkSel = { d:null, i:-1, s:null, drag:null };
+  inkRefreshAll();
   updateInkButtons();
 }
+function inkUndo(){ inkGoto(inkHist.pos - 1); }
+function inkRedo(){ inkGoto(inkHist.pos + 1); }
+
 function inkClearAll(){
-  docs.forEach(function(d){ d.ink = {}; inkRefresh(d); });
+  docs.forEach(function(d){ d.ink = {}; });
+  inkHist.items = []; inkHist.pos = 0; ink.seq = 0;
+  inkSel = { d:null, i:-1, s:null, drag:null };
+  inkRefreshAll();
   updateInkButtons();
 }
-function inkCount(){
-  var n = 0;
-  docs.forEach(function(d){
-    if(!d.ink) return;
-    Object.keys(d.ink).forEach(function(k){ n += (d.ink[k]||[]).length; });
-  });
-  return n;
+function inkCount(){ return inkHist.items.length; }
+
+function inkToolName(s){
+  if(s.tool === "pen") return "畫筆";
+  if(s.tool === "hl") return "螢光筆";
+  if(s.tool === "rect") return "方框";
+  if(s.tool === "arrow") return "箭頭";
+  if(s.tool === "text") return "文字:" + String(s.text||"").split("\n")[0].slice(0,12);
+  if(s.tool === "sym"){
+    for(var k=0;k<INK_SYMS.length;k++) if(INK_SYMS[k].id === s.sym) return INK_SYMS[k].name;
+    return "符號";
+  }
+  return "標記";
 }
+
+/* 重建歷程下拉清單 */
+function renderInkHist(){
+  var list = $("inkHistList"), hint = $("inkHistHint");
+  list.textContent = "";
+  var n = inkHist.items.length;
+  if(!n){ hint.textContent = "尚無標記。"; return; }
+  hint.textContent = "點任一列即可跳到該步驟(共 " + n + " 筆,目前第 " + inkHist.pos + " 筆)。";
+  // 最新的排最上面
+  for(var k = n - 1; k >= 0; k--){
+    (function(idx){
+      var it = inkHist.items[idx];
+      var row = document.createElement("div");
+      row.className = "histrow" + (idx + 1 > inkHist.pos ? " undone" : "");
+      var docIdx = docs.indexOf(it.d) + 1;
+      row.innerHTML = '<span class="hdot"></span><span class="hname"></span><span class="hidx"></span>';
+      row.querySelector(".hdot").style.background = it.s.color;
+      row.querySelector(".hname").textContent =
+        inkToolName(it.s) + " · " + (docIdx > 0 ? pad(docIdx) : "?") + " 第 " + (it.i + 1) + " 頁";
+      row.querySelector(".hidx").textContent = (idx + 1);
+      row.title = "跳到第 " + (idx + 1) + " 筆";
+      row.addEventListener("click", function(){ inkGoto(idx + 1); renderInkHist(); });
+      list.appendChild(row);
+    })(k);
+  }
+  // 最下面補一列「回到空白」
+  var zero = document.createElement("div");
+  zero.className = "histrow" + (inkHist.pos === 0 ? "" : " undone");
+  zero.innerHTML = '<span class="hdot" style="background:transparent"></span><span class="hname">(空白 · 全部復原)</span><span class="hidx">0</span>';
+  zero.addEventListener("click", function(){ inkGoto(0); renderInkHist(); });
+  list.appendChild(zero);
+}
+
 function updateInkButtons(){
-  var n = inkCount();
-  $("inkUndo").disabled = n === 0;
-  $("inkClear").disabled = n === 0;
+  $("inkUndo").disabled = inkHist.pos === 0;
+  $("inkRedo").disabled = inkHist.pos >= inkHist.items.length;
+  $("inkClear").disabled = inkHist.items.length === 0;
+  if(!$("inkHistPop").hidden) renderInkHist();
+}
+
+/* ================= 匯出 PDF =================
+ * 把載入的每一份文件依序接成一份 PDF,並把該頁的標記(畫筆/螢光筆/框/箭頭/符號/文字)
+ * 以向量方式畫進頁面。原頁面內容保持原樣(直接複製原始頁面,不重新光柵化)。 */
+function hexToRgb(hex){
+  var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "#FF3B30");
+  if(!m) return { r:1, g:0.23, b:0.19 };
+  return { r:parseInt(m[1],16)/255, g:parseInt(m[2],16)/255, b:parseInt(m[3],16)/255 };
+}
+
+async function exportPdf(){
+  var ready = docs.filter(function(d){ return d.doc && d._bytes; });
+  if(!ready.length){ toast("先載入 PDF"); return; }
+  if(typeof PDFLib === "undefined"){ toast("PDF 元件尚未載入,稍候再試"); return; }
+  var btn = $("exportPdf");
+  btn.disabled = true;
+  var oldLabel = btn.textContent;
+  btn.textContent = "匯出中…";
+  try{
+    var out = await PDFLib.PDFDocument.create();
+    var font = await out.embedFont(PDFLib.StandardFonts.Helvetica);
+    var total = 0;
+
+    for(var n=0; n<ready.length; n++){
+      var d = ready[n];
+      setStatus("匯出中:" + d.name + " (" + (n+1) + "/" + ready.length + ")");
+      var src = await PDFLib.PDFDocument.load(d._bytes.slice(0), { ignoreEncryption:true });
+      var idxs = src.getPageIndices();
+      var copied = await out.copyPages(src, idxs);
+
+      copied.forEach(function(pg, i){
+        out.addPage(pg);
+        total++;
+        var strokes = ((d.ink && d.ink[i]) || []).filter(function(s){ return s.seq <= inkHist.pos; });
+        if(!strokes.length) return;
+        var W = pg.getWidth(), H = pg.getHeight();
+        // 正規化座標 → PDF 座標(PDF 原點在左下,y 需翻轉)
+        var PX = function(v){ return v * W; };
+        var PY = function(v){ return H - v * H; };
+        strokes.forEach(function(s){
+          drawStrokeToPdf(pg, s, W, H, PX, PY, font);
+        });
+      });
+    }
+
+    var bytes = await out.save();
+    var blob = new Blob([bytes], { type:"application/pdf" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "pdf_compare_" + stamp() + ".pdf";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 8000);
+    toast("已匯出 " + ready.length + " 份、共 " + total + " 頁");
+    setStatus("匯出完成:" + ready.length + " 份文件,共 " + total + " 頁。");
+  }catch(err){
+    console.error(err);
+    toast("匯出失敗:" + (err && err.message ? err.message : "未知錯誤"));
+  }finally{
+    btn.disabled = false;
+    btn.textContent = oldLabel;
+  }
+}
+
+function drawStrokeToPdf(pg, s, W, H, PX, PY, font){
+  var c = hexToRgb(s.color);
+  var col = PDFLib.rgb(c.r, c.g, c.b);
+  var lw = Math.max(0.5, (s.size || 3) * (W / 800));
+  var p = s.pts;
+  if(!p || !p.length) return;
+
+  if(s.tool === "pen" || s.tool === "hl"){
+    var w = (s.tool === "hl") ? lw * 5 : lw;
+    var opa = (s.tool === "hl") ? 0.35 : 1;
+    for(var k=0;k<p.length-1;k++){
+      pg.drawLine({
+        start:{ x:PX(p[k].x),   y:PY(p[k].y) },
+        end:  { x:PX(p[k+1].x), y:PY(p[k+1].y) },
+        thickness:w, color:col, opacity:opa
+      });
+    }
+  } else if(s.tool === "rect"){
+    if(p.length < 2) return;
+    var a = p[0], b = p[p.length-1];
+    var x0 = Math.min(PX(a.x), PX(b.x)), x1 = Math.max(PX(a.x), PX(b.x));
+    var y0 = Math.min(PY(a.y), PY(b.y)), y1 = Math.max(PY(a.y), PY(b.y));
+    pg.drawRectangle({ x:x0, y:y0, width:x1-x0, height:y1-y0,
+                       borderColor:col, borderWidth:lw, opacity:0 });
+  } else if(s.tool === "arrow"){
+    if(p.length < 2) return;
+    var a2 = p[0], b2 = p[p.length-1];
+    var x1a = PX(a2.x), y1a = PY(a2.y), x2a = PX(b2.x), y2a = PY(b2.y);
+    pg.drawLine({ start:{x:x1a,y:y1a}, end:{x:x2a,y:y2a}, thickness:lw, color:col });
+    var ang = Math.atan2(y2a-y1a, x2a-x1a);
+    var hl = Math.max(6, lw * 3.2);
+    [ang - Math.PI/7, ang + Math.PI/7].forEach(function(t){
+      pg.drawLine({ start:{x:x2a,y:y2a},
+                    end:{x:x2a - hl*Math.cos(t), y:y2a - hl*Math.sin(t)},
+                    thickness:lw, color:col });
+    });
+  } else if(s.tool === "text"){
+    var fs = Math.max(6, (s.fsize || 16) * (W/800));
+    var lines = String(s.text||"").split("\n");
+    lines.forEach(function(ln, i){
+      // 非 ASCII 字元標準字型無法輸出,以底線佔位避免整份失敗
+      var safe = ln.replace(/[^\x20-\x7E]/g, "_");
+      pg.drawText(safe, { x:PX(p[0].x), y:PY(p[0].y) - fs*(i+1)*1.15 + fs*0.2,
+                          size:fs, font:font, color:col });
+    });
+  } else if(s.tool === "sym"){
+    var cx, cy, rx, ry;
+    if(p.length >= 2){
+      var bx0=Math.min(p[0].x,p[1].x), bx1=Math.max(p[0].x,p[1].x);
+      var by0=Math.min(p[0].y,p[1].y), by1=Math.max(p[0].y,p[1].y);
+      cx = PX((bx0+bx1)/2); cy = PY((by0+by1)/2);
+      rx = Math.abs(PX(bx1)-PX(bx0))/2; ry = Math.abs(PY(by1)-PY(by0))/2;
+    } else {
+      var rN = 0.04 * Math.max(1, (s.size||3)/3);
+      cx = PX(p[0].x); cy = PY(p[0].y);
+      rx = rN * W; ry = rN * 1.3 * H;
+    }
+    rx = Math.max(2, rx); ry = Math.max(2, ry);
+    var id = s.sym || "circle";
+    if(id === "circle"){
+      pg.drawEllipse({ x:cx, y:cy, xScale:rx, yScale:ry, borderColor:col, borderWidth:lw, opacity:0 });
+    } else if(id === "dot"){
+      pg.drawEllipse({ x:cx, y:cy, xScale:rx, yScale:ry, color:col });
+    } else if(id === "cross"){
+      pg.drawLine({ start:{x:cx-rx*0.78,y:cy+ry*0.78}, end:{x:cx+rx*0.78,y:cy-ry*0.78}, thickness:lw, color:col });
+      pg.drawLine({ start:{x:cx+rx*0.78,y:cy+ry*0.78}, end:{x:cx-rx*0.78,y:cy-ry*0.78}, thickness:lw, color:col });
+    } else if(id === "check"){
+      pg.drawLine({ start:{x:cx-rx*0.78,y:cy-ry*0.05}, end:{x:cx-rx*0.22,y:cy-ry*0.64}, thickness:lw, color:col });
+      pg.drawLine({ start:{x:cx-rx*0.22,y:cy-ry*0.64}, end:{x:cx+rx*0.80,y:cy+ry*0.64}, thickness:lw, color:col });
+    } else if(id === "star"){
+      var pts = [];
+      for(var k2=0;k2<5;k2++){
+        var aa = -Math.PI/2 + k2*2*Math.PI/5, bb2 = aa + Math.PI/5;
+        pts.push({x:cx+Math.cos(aa)*rx, y:cy-Math.sin(aa)*ry});
+        pts.push({x:cx+Math.cos(bb2)*rx*0.42, y:cy-Math.sin(bb2)*ry*0.42});
+      }
+      for(var k3=0;k3<pts.length;k3++){
+        var q = pts[(k3+1)%pts.length];
+        pg.drawLine({ start:pts[k3], end:q, thickness:lw, color:col });
+      }
+    } else if(id === "tri"){
+      var tp = [{x:cx,y:cy+ry},{x:cx+rx*0.95,y:cy-ry*0.8},{x:cx-rx*0.95,y:cy-ry*0.8}];
+      for(var k4=0;k4<3;k4++) pg.drawLine({ start:tp[k4], end:tp[(k4+1)%3], thickness:lw, color:col });
+      pg.drawLine({ start:{x:cx,y:cy+ry*0.3}, end:{x:cx,y:cy-ry*0.2}, thickness:lw, color:col });
+    } else if(id === "excl"){
+      pg.drawLine({ start:{x:cx,y:cy+ry*0.95}, end:{x:cx,y:cy-ry*0.34}, thickness:Math.max(lw, rx*0.22), color:col });
+      pg.drawEllipse({ x:cx, y:cy-ry*0.76, xScale:Math.max(1,rx*0.15), yScale:Math.max(1,ry*0.12), color:col });
+    } else if(id === "quest"){
+      pg.drawEllipse({ x:cx, y:cy+ry*0.42, xScale:rx*0.54, yScale:ry*0.42, borderColor:col, borderWidth:Math.max(lw,rx*0.2), opacity:0 });
+      pg.drawLine({ start:{x:cx+rx*0.14,y:cy+ry*0.02}, end:{x:cx,y:cy-ry*0.36}, thickness:Math.max(lw,rx*0.2), color:col });
+      pg.drawEllipse({ x:cx, y:cy-ry*0.74, xScale:Math.max(1,rx*0.14), yScale:Math.max(1,ry*0.11), color:col });
+    }
+  }
 }
 
 /* ================= screenshot ================= */
@@ -1144,6 +1754,20 @@ function shotCells(){
 }
 
 function shoot(){
+  // 截圖時先取消選取,避免虛線選取框被拍進去
+  var savedSel = inkSel.s ? { d:inkSel.d, i:inkSel.i, s:inkSel.s } : null;
+  if(savedSel){
+    inkSel = { d:null, i:-1, s:null, drag:null };
+    inkRedraw(savedSel.d, savedSel.i);
+  }
+  var result = shootInner();
+  if(savedSel){
+    inkSel = { d:savedSel.d, i:savedSel.i, s:savedSel.s, drag:null };
+    inkRedraw(savedSel.d, savedSel.i);
+  }
+  return result;
+}
+function shootInner(){
   var all = shotCells();
   var head = (all.length && !all[0].box) ? all[0].label : null;
   var cells = all.filter(function(c){ return c.box; });
@@ -1232,6 +1856,7 @@ function copyShot(){
 
 /* ================= controls ================= */
 $("picker").addEventListener("change", function(e){ addFiles(e.target.files); e.target.value = ""; });
+$("browseLink").addEventListener("click", function(e){ e.preventDefault(); $("picker").click(); });
 
 var stage = $("stage");
 ["dragenter","dragover"].forEach(function(ev){
@@ -1418,21 +2043,73 @@ $("textBtn").addEventListener("click", openDiff);
     var b = e.target.closest("button");
     if(!b) return;
     ink.tool = b.dataset.ink;
+    ink.prevTool = null;
+    inkClearSel();
     Array.prototype.forEach.call($("inkSeg").children, function(x){
       x.setAttribute("aria-pressed", String(x.dataset.ink === ink.tool));
     });
     document.body.classList.toggle("inkmode", inkOn());
-    if(inkOn()) setStatus("標記模式:在頁面上拖曳即可畫。切到「關」才能拖曳平移。");
+    document.body.classList.toggle("selmode", ink.tool === "sel");
+    $("inkSymBtn").hidden = (ink.tool !== "sym");
+    if(ink.tool !== "sym") $("inkSymPop").hidden = true;
+    if(ink.tool === "sel") setStatus("選取模式:點一下標記選中,拖曳移動,拉右下角縮放,Delete 刪除。");
+    else if(inkOn()) setStatus("標記模式:在頁面上拖曳即可畫。切到「關」才能拖曳平移。");
   });
 
-  $("inkUndo").addEventListener("click", inkUndo);
+  /* 符號選單 */
+  var symWrap = $("inkSyms");
+  INK_SYMS.forEach(function(s){
+    var b = document.createElement("button");
+    b.className = "symbtn";
+    b.textContent = s.g;
+    b.dataset.sym = s.id;
+    b.title = s.name;
+    b.setAttribute("aria-pressed", String(s.id === ink.sym));
+    symWrap.appendChild(b);
+  });
+  symWrap.addEventListener("click", function(e){
+    var b = e.target.closest("button");
+    if(!b) return;
+    ink.sym = b.dataset.sym;
+    Array.prototype.forEach.call(symWrap.children, function(x){
+      x.setAttribute("aria-pressed", String(x.dataset.sym === ink.sym));
+    });
+    $("inkSymCur").textContent = b.textContent;
+    $("inkSymPop").hidden = true;
+  });
+  $("inkSymBtn").addEventListener("click", function(e){
+    e.stopPropagation();
+    var p = $("inkSymPop");
+    p.hidden = !p.hidden;
+    if(!p.hidden){ $("inkPop").hidden = true; $("inkHistPop").hidden = true; }
+  });
+
+  /* 歷程下拉 */
+  $("inkHistBtn").addEventListener("click", function(e){
+    e.stopPropagation();
+    var p = $("inkHistPop");
+    p.hidden = !p.hidden;
+    if(!p.hidden){ $("inkPop").hidden = true; $("inkSymPop").hidden = true; renderInkHist(); }
+  });
+
+  document.addEventListener("click", function(e){
+    [["inkSymPop","inkSymBtn"],["inkHistPop","inkHistBtn"]].forEach(function(pair){
+      var p = $(pair[0]), b = $(pair[1]);
+      if(p.hidden) return;
+      if(!p.contains(e.target) && !b.contains(e.target)) p.hidden = true;
+    });
+  });
+
+  $("inkUndo").addEventListener("click", function(){ inkUndo(); renderInkHist(); });
+  $("inkRedo").addEventListener("click", function(){ inkRedo(); renderInkHist(); });
   $("inkClear").addEventListener("click", function(){
-    if(inkCount() && confirm("確定清除所有標記?")) inkClearAll();
+    if(inkCount() && confirm("確定清除所有標記?")){ inkClearAll(); renderInkHist(); }
   });
   updateInkButtons();
 })();
 $("shotCopy").addEventListener("click", copyShot);
 $("shotSave").addEventListener("click", saveShot);
+$("exportPdf").addEventListener("click", exportPdf);
 $("diffRun").addEventListener("click", runDiff);
 $("diffTarget").addEventListener("change", runDiff);
 $("diffPage").addEventListener("change", runDiff);
@@ -1441,7 +2118,10 @@ $("clearBtn").addEventListener("click", clearAll);
 
 document.addEventListener("keydown", function(e){
   if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
-  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"){ e.preventDefault(); inkUndo(); return; }
+  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey){ e.preventDefault(); inkUndo(); return; }
+  if((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))){ e.preventDefault(); inkRedo(); return; }
+  if((e.key === "Delete" || e.key === "Backspace") && inkSel.s){ e.preventDefault(); inkDeleteSel(); return; }
+  if(e.key === "Escape" && inkSel.s){ e.preventDefault(); inkClearSel(); return; }
   if(state.mode !== "overlay") return;
   if(e.key === "ArrowRight" || e.key === "PageDown"){ state.page++; composeAll(); e.preventDefault(); }
   if(e.key === "ArrowLeft" || e.key === "PageUp"){ state.page--; composeAll(); e.preventDefault(); }
