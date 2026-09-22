@@ -28,7 +28,7 @@ body{margin:0;background:var(--ink);color:var(--text);font-family:var(--font-ui)
 button,input,select{font:inherit;color:inherit}
 .app{display:flex;flex-direction:column;height:100dvh}
 
-.bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:9px 14px;background:var(--chrome);border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:11px;flex-wrap:wrap;padding:8px 12px;background:var(--chrome);border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}
 .mark{width:15px;height:15px;flex:none;opacity:.9}
 .group{display:flex;align-items:center;gap:7px}
@@ -190,13 +190,12 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
   <header class="bar">
     <div class="brand">
       <svg class="mark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><circle cx="8" cy="8" r="4.2"/><path d="M8 0v4.5M8 11.5V16M0 8h4.5M11.5 8H16"/></svg>
-      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v11</span>
+      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v12</span>
     </div>
 
     <input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden>
 
     <div class="group">
-      <span class="lab">檢視</span>
       <div class="seg" id="modeSeg">
         <button data-mode="side" aria-pressed="true">網格</button>
         <button data-mode="overlay" aria-pressed="false">疊圖</button>
@@ -229,10 +228,10 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
       <button class="btn sq" id="zoomOut">−</button>
       <span class="zoombox"><input type="number" id="zoomInput" min="10" max="600" step="5" title="輸入百分比,或按 + / −"><span class="pctsign">%</span></span>
       <button class="btn sq" id="zoomIn">＋</button>
-      <button class="btn" id="zoomFit">符合寬度</button>
+      <button class="btn sq" id="zoomFit" title="符合寬度：讓頁面寬度剛好塞滿欄位">⇔</button>
     </div>
 
-    <label class="switch"><input type="checkbox" id="sync" checked><span class="lab">同步捲動</span></label>
+    <label class="switch" title="捲動任一份時，其餘一起跟著走"><input type="checkbox" id="sync" checked><span class="lab">同步</span></label>
 
     <div class="group" id="ovlNav" hidden>
       <span class="lab">基準頁</span>
@@ -279,11 +278,22 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
         <div class="poprow end"><button class="btn" id="inkClear" title="只清標記，不動 PDF 檔案">清除所有標記</button></div>
       </div>
     </div>
-    <div class="group">
-      <span class="lab">截圖</span>
-      <button class="btn" id="shotCopy" title="把目前畫面複製成圖片">複製</button>
-      <button class="btn" id="shotSave" title="把目前畫面存成 PNG">存 PNG</button>
-      <button class="btn" id="exportPdf" title="把所有文件合併成一份 PDF,標記一併燒錄進去">匯出 PDF</button>
+    <div class="group" style="position:relative">
+      <button class="btn" id="outBtn" title="截圖或匯出 PDF">輸出 ▾</button>
+      <div class="pop wide" id="outPop" hidden>
+        <button class="clearopt" id="shotCopy">
+          <b>複製截圖</b>
+          <small>把目前畫面複製到剪貼簿，可直接貼到郵件或文件</small>
+        </button>
+        <button class="clearopt" id="shotSave">
+          <b>存成 PNG</b>
+          <small>把目前畫面存成圖檔，2 倍解析度</small>
+        </button>
+        <button class="clearopt" id="exportPdf">
+          <b>匯出 PDF</b>
+          <small>所有文件合併成一份 PDF，標記以向量燒錄進去</small>
+        </button>
+      </div>
     </div>
     <div class="group" style="position:relative">
       <button class="btn" id="clearBtn" title="清除標記或清除檔案">清除 ▾</button>
@@ -1743,7 +1753,8 @@ async function exportPdf(){
   var ready = docs.filter(function(d){ return d.doc && d._bytes; });
   if(!ready.length){ toast("先載入 PDF"); return; }
   if(typeof PDFLib === "undefined"){ toast("PDF 元件尚未載入,稍候再試"); return; }
-  var btn = $("exportPdf");
+  // 忙碌狀態顯示在工具列的「輸出」鈕上(選單項目內含標題與說明,不能直接覆寫文字)
+  var btn = $("outBtn");
   btn.disabled = true;
   var oldLabel = btn.textContent;
   btn.textContent = "匯出中…";
@@ -2295,9 +2306,28 @@ $("textBtn").addEventListener("click", openDiff);
   });
   updateInkButtons();
 })();
-$("shotCopy").addEventListener("click", copyShot);
-$("shotSave").addEventListener("click", saveShot);
-$("exportPdf").addEventListener("click", exportPdf);
+/* 輸出選單:截圖與匯出 PDF 收在一起,省下工具列空間 */
+$("outBtn").addEventListener("click", function(e){
+  e.stopPropagation();
+  var p = $("outPop");
+  p.hidden = !p.hidden;
+  if(!p.hidden){
+    $("clearPop").hidden = true; $("gridPop").hidden = true;
+    $("inkPop").hidden = true; $("inkSymPop").hidden = true; $("inkHistPop").hidden = true;
+    var n = docs.length;
+    $("shotCopy").disabled = n === 0;
+    $("shotSave").disabled = n === 0;
+    $("exportPdf").disabled = n === 0;
+  }
+});
+document.addEventListener("click", function(e){
+  var p = $("outPop");
+  if(p.hidden) return;
+  if(!p.contains(e.target) && !$("outBtn").contains(e.target)) p.hidden = true;
+});
+$("shotCopy").addEventListener("click", function(){ $("outPop").hidden = true; copyShot(); });
+$("shotSave").addEventListener("click", function(){ $("outPop").hidden = true; saveShot(); });
+$("exportPdf").addEventListener("click", function(){ $("outPop").hidden = true; exportPdf(); });
 $("diffRun").addEventListener("click", runDiff);
 $("diffTarget").addEventListener("change", runDiff);
 $("diffPage").addEventListener("change", runDiff);
