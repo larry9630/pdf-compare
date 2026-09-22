@@ -41,6 +41,15 @@ button,input,select{font:inherit;color:inherit}
 .seg button{background:var(--raise);border:0;padding:5px 11px;cursor:pointer;font-size:13px;color:var(--muted)}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button[aria-pressed="true"]{background:#33414F;color:var(--text)}
+/* 同一條工具列裡用較粗的分隔線把「模式 / 手繪 / 形狀 / 文字」分群,不增加點擊次數 */
+.seg button.gap{border-left:3px solid var(--chrome)}
+.seg button:disabled{opacity:.35;cursor:not-allowed}
+#inkHistSeg button{min-width:30px;text-align:center;font-family:var(--font-mono)}
+#inkSymTool[aria-pressed="true"],#inkPenTool[aria-pressed="true"]{position:relative}
+#inkSymTool[aria-pressed="true"]::after,#inkPenTool[aria-pressed="true"]::after{
+  content:"▾";position:absolute;right:2px;bottom:0;font-size:8px;opacity:.75}
+/* 暫時用右鍵選取標記時,原本的工具鈕仍保持高亮,讓人知道放開後會回到哪個工具 */
+.seg button.tempbase{background:#2A3542;color:var(--text);box-shadow:inset 0 0 0 1px var(--cyan)}
 select.pick,input.num{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
 input.num{width:48px;text-align:center;font-family:var(--font-mono)}
 .readout{font-family:var(--font-mono);font-size:12px;color:var(--muted);min-width:42px;text-align:center}
@@ -181,7 +190,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
   <header class="bar">
     <div class="brand">
       <svg class="mark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><circle cx="8" cy="8" r="4.2"/><path d="M8 0v4.5M8 11.5V16M0 8h4.5M11.5 8H16"/></svg>
-      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v9</span>
+      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v11</span>
     </div>
 
     <input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden>
@@ -236,16 +245,15 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
     <div class="group" style="position:relative">
       <span class="lab">標記</span>
       <div class="seg" id="inkSeg">
-        <button data-ink="off" aria-pressed="true" title="關閉標記(可正常捲動)">關</button>
-        <button data-ink="pen" aria-pressed="false" title="自由畫筆">筆</button>
-        <button data-ink="hl" aria-pressed="false" title="螢光筆(半透明)">螢</button>
-        <button data-ink="rect" aria-pressed="false" title="方框">框</button>
+        <button data-ink="off" aria-pressed="true" title="關閉標記(可正常捲動、左鍵拖曳平移)">關</button>
+        <button data-ink="pen" aria-pressed="false" class="gap" id="inkPenTool"
+                title="畫筆。已選中時再按一次可切換「筆 ⇄ 螢光筆」"><span id="inkPenCur">筆</span></button>
+        <button data-ink="rect" aria-pressed="false" class="gap" title="方框">框</button>
         <button data-ink="arrow" aria-pressed="false" title="箭頭">箭</button>
-        <button data-ink="sym" aria-pressed="false" title="符號:圈圈、打勾、叉叉等">符</button>
-        <button data-ink="text" aria-pressed="false" title="文字方塊:點一下即可打字">字</button>
-        <button data-ink="sel" aria-pressed="false" title="選取:點一下選中標記,可拖曳移動、縮放、刪除">選</button>
+        <button data-ink="sym" aria-pressed="false" id="inkSymTool"
+                title="符號工具。已選中時再按一次可換符號"><span id="inkSymCur">◯</span></button>
+        <button data-ink="text" aria-pressed="false" class="gap" title="文字方塊:點一下即可打字">字</button>
       </div>
-      <button class="btn sq" id="inkSymBtn" title="選符號" hidden><span id="inkSymCur">◯</span></button>
       <div class="pop" id="inkSymPop" hidden>
         <div class="poprow" id="inkSyms"></div>
         <div class="pophint">選好符號後,在頁面上點一下或拖曳決定大小。</div>
@@ -260,9 +268,11 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
         </div>
         <div class="poprow"><span class="lab">粗細</span><input type="range" id="inkSize" min="1" max="20" value="3" style="flex:1"><span class="readout" id="inkSizeRead">3</span></div>
       </div>
-      <button class="btn sq" id="inkUndo" title="上一步(Ctrl+Z)">↶</button>
-      <button class="btn sq" id="inkRedo" title="下一步(Ctrl+Y)">↷</button>
-      <button class="btn sq" id="inkHistBtn" title="歷程:一次跳回多步">☰</button>
+      <div class="seg" id="inkHistSeg">
+        <button id="inkUndo" title="上一步(Ctrl+Z)">↶</button>
+        <button id="inkRedo" title="下一步(Ctrl+Y)">↷</button>
+        <button id="inkHistBtn" title="歷程:一次跳回多步,也可在這裡清除所有標記">☰</button>
+      </div>
       <div class="pop wide" id="inkHistPop" hidden>
         <div class="pophint" id="inkHistHint">尚無標記。</div>
         <div class="histlist" id="inkHistList"></div>
@@ -1122,7 +1132,10 @@ function runDiff(){
 /* ================= 標記 / 塗鴉 =================
  * 筆畫以「頁面正規化座標(0~1)」儲存,因此縮放、換排版、捲動重繪都不會跑掉。
  * 資料結構:d.ink[pageIndex] = [ {tool,color,size,pts:[{x,y},...]}, ... ] */
-var ink = { tool:"off", color:"#FF3B30", size:3, drawing:null, seq:0, sym:"circle" };
+var ink = { tool:"off", color:"#FF3B30", size:3, drawing:null, seq:0, sym:"circle",
+            penMode:"pen",                       // 筆按鈕目前是一般筆還是螢光筆
+            /* 每個工具各自記住粗細,切換時不會互相干擾 */
+            sizeBy:{ pen:3, hl:14, rect:3, arrow:3, sym:3, text:4 } };
 var INK_COLORS = ["#FF3B30","#FF9500","#FFD400","#34C759","#0A84FF","#AF52DE","#111111","#FFFFFF"];
 /* 可用符號:圖示、名稱 */
 var INK_SYMS = [
@@ -1252,13 +1265,29 @@ function inkOn(){ return ink.tool !== "off"; }
 function syncInkToolButtons(){
   var seg = $("inkSeg");
   if(!seg) return;
+  // 螢光筆與一般筆共用同一顆按鈕,按鈕要對應到 pen
+  var shown = (ink.tool === "hl") ? "pen" : ink.tool;
   Array.prototype.forEach.call(seg.children, function(x){
-    x.setAttribute("aria-pressed", String(x.dataset.ink === ink.tool));
+    x.setAttribute("aria-pressed", String(x.dataset.ink === shown));
+    // 右鍵暫時切到選取時,讓原本的工具鈕保持高亮
+    var temp = (ink.tool === "sel" && ink.prevTool &&
+                x.dataset.ink === (ink.prevTool === "hl" ? "pen" : ink.prevTool));
+    x.classList.toggle("tempbase", !!temp);
   });
+  var cur = $("inkPenCur");
+  if(cur) cur.textContent = (ink.penMode === "hl") ? "螢" : "筆";
   document.body.classList.toggle("inkmode", inkOn());
   document.body.classList.toggle("selmode", ink.tool === "sel");
-  var sb = $("inkSymBtn");
-  if(sb) sb.hidden = (ink.tool !== "sym");
+  if(ink.tool !== "sym"){ var sp = $("inkSymPop"); if(sp) sp.hidden = true; }
+}
+/* 切換工具時載入該工具自己的粗細,並同步滑桿 */
+function inkUseToolSize(tool){
+  if(!ink.sizeBy) return;
+  if(ink.sizeBy[tool] === undefined) return;
+  ink.size = ink.sizeBy[tool];
+  var sl = $("inkSize"), rd = $("inkSizeRead");
+  if(sl) sl.value = ink.size;
+  if(rd) rd.textContent = ink.size;
 }
 function inkStore(d, i){
   if(!d.ink) d.ink = {};
@@ -1330,7 +1359,8 @@ function inkDrawStroke(x, s, cw, ch){
   x.lineCap = "round"; x.lineJoin = "round";
   x.strokeStyle = s.color; x.fillStyle = s.color;
   x.lineWidth = Math.max(0.5, s.size * (cw / 800));
-  if(s.tool === "hl"){ x.globalAlpha = 0.35; x.lineWidth *= 5; }
+  // 螢光筆:半透明,粗細完全由滑桿決定(不再固定放大 5 倍,所以調整看得出效果)
+  if(s.tool === "hl"){ x.globalAlpha = 0.35; }
   var X = function(v){ return v * cw; }, Y = function(v){ return v * ch; };
 
   if(s.tool === "pen" || s.tool === "hl"){
@@ -1475,7 +1505,8 @@ function inkCommit(d, i, s){
 function inkAttach(d){
   var el = d.scroll;
   el.addEventListener("pointerdown", function(e){
-    if(!inkOn()) return;
+    // 右鍵選取在「關」的狀態下也要能用——這樣才不需要獨立的「選」按鈕
+    if(!inkOn() && e.button !== 2) return;
 
     // 右鍵:點在圖形上就選取它,點在空白處則讓給平移
     if(e.button === 2){
@@ -1770,7 +1801,7 @@ function drawStrokeToPdf(pg, s, W, H, PX, PY, font){
   if(!p || !p.length) return;
 
   if(s.tool === "pen" || s.tool === "hl"){
-    var w = (s.tool === "hl") ? lw * 5 : lw;
+    var w = lw;
     var opa = (s.tool === "hl") ? 0.35 : 1;
     for(var k=0;k<p.length-1;k++){
       pg.drawLine({
@@ -2166,6 +2197,9 @@ $("textBtn").addEventListener("click", openDiff);
   $("inkSize").addEventListener("input", function(e){
     ink.size = parseInt(e.target.value,10) || 3;
     $("inkSizeRead").textContent = ink.size;
+    // 記到目前這個工具名下,切走再切回來時粗細會保留
+    var t = (ink.tool === "sel" && ink.prevTool) ? ink.prevTool : ink.tool;
+    if(ink.sizeBy && ink.sizeBy[t] !== undefined) ink.sizeBy[t] = ink.size;
   });
 
   $("inkColorBtn").addEventListener("click", function(e){
@@ -2183,18 +2217,33 @@ $("textBtn").addEventListener("click", openDiff);
   $("inkSeg").addEventListener("click", function(e){
     var b = e.target.closest("button");
     if(!b) return;
-    ink.tool = b.dataset.ink;
+    // 符號工具已在使用中時,再按一次就打開符號選單(省掉一顆獨立按鈕)
+    if(b.dataset.ink === "sym" && ink.tool === "sym"){
+      var sp2 = $("inkSymPop");
+      sp2.hidden = !sp2.hidden;
+      if(!sp2.hidden){ $("inkPop").hidden = true; $("inkHistPop").hidden = true; $("clearPop").hidden = true; }
+      return;
+    }
+    // 畫筆已在使用中時,再按一次就在「一般筆 ⇄ 螢光筆」之間切換
+    if(b.dataset.ink === "pen" && (ink.tool === "pen" || ink.tool === "hl")){
+      ink.penMode = (ink.penMode === "hl") ? "pen" : "hl";
+      ink.tool = ink.penMode;
+      inkUseToolSize(ink.tool);
+      syncInkToolButtons();
+      setStatus(ink.penMode === "hl"
+        ? "螢光筆:半透明,粗細可用色盤裡的滑桿調整。再按一次換回一般筆。"
+        : "一般筆:再按一次可換成螢光筆。");
+      return;
+    }
+    // 按「筆」時,採用上次用的是一般筆還是螢光筆
+    ink.tool = (b.dataset.ink === "pen") ? ink.penMode : b.dataset.ink;
     ink.prevTool = null;
     inkClearSel();
-    Array.prototype.forEach.call($("inkSeg").children, function(x){
-      x.setAttribute("aria-pressed", String(x.dataset.ink === ink.tool));
-    });
-    document.body.classList.toggle("inkmode", inkOn());
-    document.body.classList.toggle("selmode", ink.tool === "sel");
-    $("inkSymBtn").hidden = (ink.tool !== "sym");
-    if(ink.tool !== "sym") $("inkSymPop").hidden = true;
-    if(ink.tool === "sel") setStatus("選取模式:點一下標記選中,拖曳移動,拉右下角縮放,Delete 刪除。");
-    else if(inkOn()) setStatus("標記模式:在頁面上拖曳即可畫。切到「關」才能拖曳平移。");
+    inkUseToolSize(ink.tool);
+    syncInkToolButtons();
+    if(ink.tool === "sym") setStatus("符號工具:再按一次符號鈕可換符號。頁面上點一下或拖曳決定大小。");
+    else if(ink.tool === "hl") setStatus("螢光筆:半透明,粗細可用色盤裡的滑桿調整。再按一次換回一般筆。");
+    else if(inkOn()) setStatus("標記模式:在頁面上拖曳即可畫。要選取已畫的標記,對著它按右鍵。");
   });
 
   /* 符號選單 */
@@ -2218,13 +2267,6 @@ $("textBtn").addEventListener("click", openDiff);
     $("inkSymCur").textContent = b.textContent;
     $("inkSymPop").hidden = true;
   });
-  $("inkSymBtn").addEventListener("click", function(e){
-    e.stopPropagation();
-    var p = $("inkSymPop");
-    p.hidden = !p.hidden;
-    if(!p.hidden){ $("inkPop").hidden = true; $("inkHistPop").hidden = true; }
-  });
-
   /* 歷程下拉 */
   $("inkHistBtn").addEventListener("click", function(e){
     e.stopPropagation();
@@ -2234,7 +2276,7 @@ $("textBtn").addEventListener("click", openDiff);
   });
 
   document.addEventListener("click", function(e){
-    [["inkSymPop","inkSymBtn"],["inkHistPop","inkHistBtn"]].forEach(function(pair){
+    [["inkSymPop","inkSymTool"],["inkHistPop","inkHistBtn"]].forEach(function(pair){
       var p = $(pair[0]), b = $(pair[1]);
       if(p.hidden) return;
       if(!p.contains(e.target) && !b.contains(e.target)) p.hidden = true;
