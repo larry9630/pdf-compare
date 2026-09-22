@@ -59,6 +59,8 @@ input.num{width:48px;text-align:center;font-family:var(--font-mono)}
 .zoombox .pctsign{font-family:var(--font-mono);font-size:12px;color:var(--muted)}
 .zoombox.fit input{color:var(--muted)}
 .pop{position:absolute;top:calc(100% + 6px);left:0;z-index:30;background:var(--chrome);border:1px solid var(--line);border-radius:8px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);min-width:210px}
+/* 靠工具列右端的選單改成向右對齊,才不會往左邊蓋住其他控制項 */
+.pop.anchorRight{left:auto;right:0}
 .poprow{display:flex;align-items:center;gap:7px}
 .poprow+.poprow{margin-top:9px}
 .poprow.end{justify-content:flex-end}
@@ -190,7 +192,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
   <header class="bar">
     <div class="brand">
       <svg class="mark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><circle cx="8" cy="8" r="4.2"/><path d="M8 0v4.5M8 11.5V16M0 8h4.5M11.5 8H16"/></svg>
-      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v12</span>
+      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v13</span>
     </div>
 
     <input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden>
@@ -272,7 +274,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
         <button id="inkRedo" title="下一步(Ctrl+Y)">↷</button>
         <button id="inkHistBtn" title="歷程:一次跳回多步,也可在這裡清除所有標記">☰</button>
       </div>
-      <div class="pop wide" id="inkHistPop" hidden>
+      <div class="pop wide anchorRight" id="inkHistPop" hidden>
         <div class="pophint" id="inkHistHint">尚無標記。</div>
         <div class="histlist" id="inkHistList"></div>
         <div class="poprow end"><button class="btn" id="inkClear" title="只清標記，不動 PDF 檔案">清除所有標記</button></div>
@@ -280,31 +282,31 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
     </div>
     <div class="group" style="position:relative">
       <button class="btn" id="outBtn" title="截圖或匯出 PDF">輸出 ▾</button>
-      <div class="pop wide" id="outPop" hidden>
+      <div class="pop wide anchorRight" id="outPop" hidden>
         <button class="clearopt" id="shotCopy">
           <b>複製截圖</b>
-          <small>把目前畫面複製到剪貼簿，可直接貼到郵件或文件</small>
+          <small>複製到剪貼簿，可直接貼上</small>
         </button>
         <button class="clearopt" id="shotSave">
           <b>存成 PNG</b>
-          <small>把目前畫面存成圖檔，2 倍解析度</small>
+          <small>存成圖檔，2 倍解析度</small>
         </button>
         <button class="clearopt" id="exportPdf">
           <b>匯出 PDF</b>
-          <small>所有文件合併成一份 PDF，標記以向量燒錄進去</small>
+          <small>合併所有文件，標記一併燒錄</small>
         </button>
       </div>
     </div>
     <div class="group" style="position:relative">
       <button class="btn" id="clearBtn" title="清除標記或清除檔案">清除 ▾</button>
-      <div class="pop wide" id="clearPop" hidden>
+      <div class="pop wide anchorRight" id="clearPop" hidden>
         <button class="clearopt" id="clearInk">
           <b>清除標記</b>
-          <small>只刪掉畫筆、螢光筆、框、箭頭、符號、文字<br>PDF 檔案留著，繼續比對</small>
+          <small>只刪標記，PDF 檔案留著</small>
         </button>
         <button class="clearopt danger" id="clearFiles">
           <b>清除檔案</b>
-          <small>移除所有 PDF，回到空白畫面<br>標記也會一起消失</small>
+          <small>移除所有 PDF，標記也會消失</small>
         </button>
       </div>
     </div>
@@ -374,6 +376,27 @@ function baseDoc(){ return docs.filter(function(d){ return d.id === state.baseId
 /* ================= 聚焦 =================
  * state.focus 為空 = 全部顯示;有內容 = 只顯示清單內的那幾份。
  * 這只是「暫時只看某幾份」,不會移除文件,也不會動到標記或捲動位置。 */
+/* ================= 下拉選單 =================
+ * 所有浮動選單集中管理:開一個就關掉其他的。
+ * (先前每個選單各自維護「要關誰」的清單,加新選單時很容易漏掉而同時開兩個) */
+var POP_IDS = ["gridPop","inkPop","inkSymPop","inkHistPop","outPop","clearPop"];
+function closePops(keep){
+  POP_IDS.forEach(function(id){
+    if(id === keep) return;
+    var p = $(id);
+    if(p) p.hidden = true;
+  });
+}
+/* 切換某個選單:開啟時自動關閉其餘。回傳開啟後的狀態(true = 現在是開的) */
+function togglePop(id){
+  var p = $(id);
+  if(!p) return false;
+  var willOpen = p.hidden;
+  closePops(willOpen ? id : null);
+  p.hidden = !willOpen;
+  return willOpen;
+}
+
 function focusOn(){ return state.focus.length > 0; }
 function isShown(d){ return !focusOn() || state.focus.indexOf(d.id) >= 0; }
 function shownDocs(){ return docs.filter(isShown); }
@@ -2090,7 +2113,8 @@ function updateGridHint(){
 }
 function toggleGridPop(show){
   var p = $("gridPop");
-  p.hidden = (show === undefined) ? !p.hidden : !show;
+  if(show === undefined){ togglePop("gridPop"); }
+  else { if(show) closePops("gridPop"); p.hidden = !show; }
   if(!p.hidden){
     // 開啟時帶入目前值
     if(state.cols === "custom"){ $("gCols").value = state.gridCols; $("gRows").value = state.gridRows; }
@@ -2215,9 +2239,7 @@ $("textBtn").addEventListener("click", openDiff);
 
   $("inkColorBtn").addEventListener("click", function(e){
     e.stopPropagation();
-    var p = $("inkPop");
-    p.hidden = !p.hidden;
-    if(!p.hidden) $("gridPop").hidden = true;
+    togglePop("inkPop");
   });
   document.addEventListener("click", function(e){
     var p = $("inkPop");
@@ -2230,9 +2252,7 @@ $("textBtn").addEventListener("click", openDiff);
     if(!b) return;
     // 符號工具已在使用中時,再按一次就打開符號選單(省掉一顆獨立按鈕)
     if(b.dataset.ink === "sym" && ink.tool === "sym"){
-      var sp2 = $("inkSymPop");
-      sp2.hidden = !sp2.hidden;
-      if(!sp2.hidden){ $("inkPop").hidden = true; $("inkHistPop").hidden = true; $("clearPop").hidden = true; }
+      togglePop("inkSymPop");
       return;
     }
     // 畫筆已在使用中時,再按一次就在「一般筆 ⇄ 螢光筆」之間切換
@@ -2281,9 +2301,7 @@ $("textBtn").addEventListener("click", openDiff);
   /* 歷程下拉 */
   $("inkHistBtn").addEventListener("click", function(e){
     e.stopPropagation();
-    var p = $("inkHistPop");
-    p.hidden = !p.hidden;
-    if(!p.hidden){ $("inkPop").hidden = true; $("inkSymPop").hidden = true; renderInkHist(); }
+    if(togglePop("inkHistPop")) renderInkHist();
   });
 
   document.addEventListener("click", function(e){
@@ -2309,11 +2327,7 @@ $("textBtn").addEventListener("click", openDiff);
 /* 輸出選單:截圖與匯出 PDF 收在一起,省下工具列空間 */
 $("outBtn").addEventListener("click", function(e){
   e.stopPropagation();
-  var p = $("outPop");
-  p.hidden = !p.hidden;
-  if(!p.hidden){
-    $("clearPop").hidden = true; $("gridPop").hidden = true;
-    $("inkPop").hidden = true; $("inkSymPop").hidden = true; $("inkHistPop").hidden = true;
+  if(togglePop("outPop")){
     var n = docs.length;
     $("shotCopy").disabled = n === 0;
     $("shotSave").disabled = n === 0;
@@ -2335,20 +2349,14 @@ $("diffClose").addEventListener("click", function(){ $("drawer").hidden = true; 
 /* 清除選單:標記與檔案分開,各自確認 */
 $("clearBtn").addEventListener("click", function(e){
   e.stopPropagation();
-  var p = $("clearPop");
-  p.hidden = !p.hidden;
-  if(!p.hidden){
-    $("gridPop").hidden = true; $("inkPop").hidden = true;
-    $("inkSymPop").hidden = true; $("inkHistPop").hidden = true;
+  if(togglePop("clearPop")){
     var nInk = inkCount(), nDoc = docs.length;
     $("clearInk").disabled = nInk === 0;
     $("clearFiles").disabled = nDoc === 0;
-    $("clearInk").querySelector("small").innerHTML =
-      nInk ? ("目前有 " + nInk + " 筆標記<br>PDF 檔案留著，繼續比對")
-           : "目前沒有任何標記";
-    $("clearFiles").querySelector("small").innerHTML =
-      nDoc ? ("移除全部 " + nDoc + " 份 PDF，回到空白畫面<br>"
-              + (nInk ? ("連同 " + nInk + " 筆標記一起消失") : "目前沒有標記"))
+    $("clearInk").querySelector("small").textContent =
+      nInk ? ("刪掉 " + nInk + " 筆標記，PDF 檔案留著") : "目前沒有任何標記";
+    $("clearFiles").querySelector("small").textContent =
+      nDoc ? ("移除 " + nDoc + " 份 PDF" + (nInk ? ("，連同 " + nInk + " 筆標記") : ""))
            : "目前沒有載入檔案";
   }
 });
