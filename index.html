@@ -99,6 +99,29 @@ input.num.hex{width:78px;text-transform:uppercase;font-size:12px}
 .poff{width:34px;background:transparent;border:1px solid var(--line);border-radius:4px;padding:1px 2px;text-align:center;font-family:var(--font-mono);font-size:11px;flex:none;-moz-appearance:textfield}
 .poff::-webkit-outer-spin-button,.poff::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .px{background:none;border:0;color:var(--muted);cursor:pointer;padding:0 3px;font-size:15px;line-height:1;flex:none}
+.pfocus{background:none;border:0;color:var(--muted);cursor:pointer;padding:0 3px;font-size:13px;line-height:1;flex:none}
+.pfocus:hover{color:var(--cyan)}
+.pane.focused .pfocus{color:var(--cyan)}
+.pane.hiddenPane{display:none !important}
+.focusbar{display:flex;align-items:center;gap:8px;padding:3px 9px;border-radius:5px;background:#2C3A47;border:1px solid var(--cyan)}
+.focusbar .lab{color:var(--cyan)}
+.chips{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.chipbtn{font-family:var(--font-mono);font-size:11px;padding:3px 7px;border-radius:4px;
+  background:var(--raise);border:1px solid var(--line);color:var(--muted);cursor:pointer}
+.chipbtn:hover{border-color:var(--muted);color:var(--text)}
+.chipbtn[aria-pressed="true"]{background:var(--cyan);border-color:var(--cyan);color:#06222C;font-weight:700}
+.chipbtn.isbase{box-shadow:inset 0 -2px 0 var(--mag)}
+.ver{font-family:var(--font-mono);font-size:9px;color:var(--muted);margin-left:5px;
+  padding:1px 4px;border:1px solid var(--line);border-radius:3px;vertical-align:middle;font-weight:400}
+.focushint{font-size:10px;color:var(--muted)}
+.clearopt{display:block;width:100%;text-align:left;background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:9px 11px;cursor:pointer;color:var(--text)}
+.clearopt+.clearopt{margin-top:8px}
+.clearopt:hover{border-color:var(--muted)}
+.clearopt.danger:hover{border-color:var(--mag)}
+.clearopt b{display:block;font-size:13px;font-weight:600;margin-bottom:3px}
+.clearopt.danger b{color:#FF9BC1}
+.clearopt small{display:block;font-size:11px;color:var(--muted);line-height:1.5}
+.clearopt:disabled{opacity:.4;cursor:not-allowed}
 .px:hover{color:var(--mag)}
 .scroll{flex:1;overflow:auto;scrollbar-width:thin;cursor:grab}
 .scroll.grabbing{cursor:grabbing}
@@ -158,7 +181,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
   <header class="bar">
     <div class="brand">
       <svg class="mark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><circle cx="8" cy="8" r="4.2"/><path d="M8 0v4.5M8 11.5V16M0 8h4.5M11.5 8H16"/></svg>
-      套版比對台
+      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v9</span>
     </div>
 
     <input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden>
@@ -243,7 +266,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
       <div class="pop wide" id="inkHistPop" hidden>
         <div class="pophint" id="inkHistHint">尚無標記。</div>
         <div class="histlist" id="inkHistList"></div>
-        <div class="poprow end"><button class="btn" id="inkClear">全部清除</button></div>
+        <div class="poprow end"><button class="btn" id="inkClear" title="只清標記，不動 PDF 檔案">清除所有標記</button></div>
       </div>
     </div>
     <div class="group">
@@ -252,7 +275,19 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
       <button class="btn" id="shotSave" title="把目前畫面存成 PNG">存 PNG</button>
       <button class="btn" id="exportPdf" title="把所有文件合併成一份 PDF,標記一併燒錄進去">匯出 PDF</button>
     </div>
-    <button class="btn" id="clearBtn">全部清除</button>
+    <div class="group" style="position:relative">
+      <button class="btn" id="clearBtn" title="清除標記或清除檔案">清除 ▾</button>
+      <div class="pop wide" id="clearPop" hidden>
+        <button class="clearopt" id="clearInk">
+          <b>清除標記</b>
+          <small>只刪掉畫筆、螢光筆、框、箭頭、符號、文字<br>PDF 檔案留著，繼續比對</small>
+        </button>
+        <button class="clearopt danger" id="clearFiles">
+          <b>清除檔案</b>
+          <small>移除所有 PDF，回到空白畫面<br>標記也會一起消失</small>
+        </button>
+      </div>
+    </div>
   </header>
 
   <main class="stage" id="stage">
@@ -285,6 +320,13 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
       <span class="key2"><span class="chip" style="background:var(--mag)"></span>只在基準</span>
       <span class="key2"><span class="chip" style="background:var(--cyan)"></span>只在對照</span>
     </div>
+    <div class="focusbar" id="focusBar" hidden>
+      <span class="lab">只看</span>
+      <span class="focushint">可複選</span>
+      <div class="chips" id="focusChips"></div>
+      <button class="btn" id="focusAll" title="回到全部顯示(Esc)">全部</button>
+      <span class="lab" id="focusInfo"></span>
+    </div>
     <div class="spacer"></div>
     <div id="statusText">尚未載入檔案。</div>
   </footer>
@@ -302,12 +344,86 @@ var clamp = function(v,a,b){ return Math.max(a, Math.min(b, v)); };
 var MAX = 12;
 
 var docs = [];
-var state = { mode:"side", zoom:"fit", cols:"auto", sync:true, baseId:null, page:1, gridCols:2, gridRows:1 };
+var state = { mode:"side", zoom:"fit", cols:"auto", sync:true, baseId:null, page:1, gridCols:2, gridRows:1, focus:[] };
 var uid = 0;
 
 function setStatus(t){ $("statusText").textContent = t; }
 function pad(n){ return (n < 10 ? "0" : "") + n; }
 function baseDoc(){ return docs.filter(function(d){ return d.id === state.baseId; })[0] || docs[0]; }
+
+/* ================= 聚焦 =================
+ * state.focus 為空 = 全部顯示;有內容 = 只顯示清單內的那幾份。
+ * 這只是「暫時只看某幾份」,不會移除文件,也不會動到標記或捲動位置。 */
+function focusOn(){ return state.focus.length > 0; }
+function isShown(d){ return !focusOn() || state.focus.indexOf(d.id) >= 0; }
+function shownDocs(){ return docs.filter(isShown); }
+
+/* 單獨放大某一份;若它已經是唯一聚焦的,再按一次就還原 */
+function soloFocus(id){
+  if(state.focus.length === 1 && state.focus[0] === id) state.focus = [];
+  else state.focus = [id];
+  applyFocus();
+}
+/* 加入 / 移出聚焦清單(比對其中幾份)。
+ * 純切換:沒選 = 全部顯示;選了幾個就只看那幾個;全部取消又回到全部顯示。 */
+function toggleFocus(id){
+  var k = state.focus.indexOf(id);
+  if(k >= 0) state.focus.splice(k, 1);
+  else state.focus.push(id);
+  // 依文件原本的順序排列,版面才不會跳來跳去
+  var order = docs.map(function(d){ return d.id; });
+  state.focus.sort(function(a,b){ return order.indexOf(a) - order.indexOf(b); });
+  applyFocus();
+}
+function clearFocus(){
+  if(!focusOn()) return;
+  state.focus = [];
+  applyFocus();
+}
+function applyFocus(){
+  // 聚焦清單裡若有已被移除的文件,順手清掉
+  state.focus = state.focus.filter(function(id){
+    return docs.some(function(d){ return d.id === id; });
+  });
+  docs.forEach(function(d){
+    if(!d.el) return;
+    var on = isShown(d);
+    d.el.classList.toggle("hiddenPane", !on);
+    d.el.classList.toggle("focused", focusOn() && on);
+    var btn = d.el.querySelector(".pfocus");
+    if(btn) btn.textContent = (focusOn() && on && state.focus.length === 1) ? "⤡" : "⤢";
+  });
+  updateFocusBar();
+  refreshGrid();
+  if(state.mode === "overlay") rebuildOverlay();
+  else requestAnimationFrame(function(){ relayoutAll(); syncNow(); });
+}
+/* 狀態列的「只看」數字鈕:兩份以上就顯示,隨時可以點開/點掉任何一份,
+ * 包含目前被隱藏起來的那些——這是能挑選多份的關鍵。 */
+function updateFocusBar(){
+  var bar = $("focusBar");
+  if(!bar) return;
+  bar.hidden = docs.length < 2;
+  if(bar.hidden) return;
+
+  var box = $("focusChips");
+  box.textContent = "";
+  docs.forEach(function(d, i){
+    var b = document.createElement("button");
+    var picked = state.focus.indexOf(d.id) >= 0;
+    b.className = "chipbtn" + (d.id === state.baseId ? " isbase" : "");
+    b.textContent = (picked ? "✓" : "") + pad(i+1);
+    b.title = (picked ? "點一下移出：" : "點一下加入：") + d.name
+            + (d.id === state.baseId ? "（基準）" : "");
+    b.setAttribute("aria-pressed", String(picked));
+    b.addEventListener("click", function(){ toggleFocus(d.id); });
+    box.appendChild(b);
+  });
+  $("focusAll").setAttribute("aria-pressed", String(!focusOn()));
+  $("focusInfo").textContent = focusOn()
+    ? ("只看 " + state.focus.length + "/" + docs.length + " 份")
+    : ("全部 " + docs.length + " 份");
+}
 
 /* ================= load ================= */
 function addFiles(list){
@@ -320,6 +436,7 @@ function addFiles(list){
     setStatus("一次最多放 " + MAX + " 份，先載入前 " + room + " 份。");
     files = files.slice(0, room);
   }
+  clearFocus();          // 新加入的檔案要看得到,先回到全部顯示
   files.forEach(loadOne);
 }
 
@@ -360,6 +477,7 @@ function loadOne(file){
 
 function refreshMeta(){
   var ready = docs.filter(function(d){ return d.doc; });
+  updateFocusBar();                       // 檔案增減時,數字鈕要跟著重建
   if(!ready.length){ setStatus("尚未載入檔案。"); return; }
   var b = baseDoc();
   setStatus(ready.length + " 份文件 · 基準：" + (b ? b.name : "—") + (b && b.doc ? "（" + b.doc.numPages + " 頁）" : ""));
@@ -384,6 +502,7 @@ function buildPane(d){
       '<span class="pname"></span>' +
       '<span class="pind"></span>' +
       '<input class="poff" type="number" step="1" value="0" title="對頁差：這份比基準多／少幾頁">' +
+      '<button class="pfocus" title="只看這一份(再按一次還原)。要挑多份請用下方狀態列的數字鈕">⤢</button>' +
       '<button class="px" title="移除">×</button>' +
     '</div>' +
     '<div class="scroll"><div class="pages"></div></div>';
@@ -394,6 +513,16 @@ function buildPane(d){
   pane.querySelector(".pname").title = d.name;
   pane.querySelector(".badge").addEventListener("click", function(){ setBase(d.id); });
   pane.querySelector(".px").addEventListener("click", function(){ removeDoc(d.id); });
+  pane.querySelector(".pfocus").addEventListener("click", function(e){
+    e.stopPropagation();
+    if(e.ctrlKey || e.metaKey) toggleFocus(d.id);   // 仍支援 Ctrl 切換(看得到的窗格)
+    else soloFocus(d.id);                            // 只看這一份
+  });
+  // 連點標題列也可以單獨放大 / 還原
+  pane.querySelector(".ph").addEventListener("dblclick", function(e){
+    if(e.target.closest("input,button")) return;
+    soloFocus(d.id);
+  });
   pane.querySelector(".poff").addEventListener("change", function(e){
     d.offset = parseInt(e.target.value, 10) || 0;
     if(state.mode === "overlay") composeAll(); else syncNow();
@@ -459,14 +588,23 @@ function removeDoc(id){
   }
   if(state.baseId === id) state.baseId = docs.length ? docs[0].id : null;
   docs.forEach(function(x){ x.el.classList.toggle("base", x.id === state.baseId); });
+  if(focusOn()) applyFocus();      // 移出聚焦清單並重排
   refreshGrid(); refreshMeta();
   if(state.mode === "overlay") rebuildOverlay();
 }
 
 function clearAll(){
   docs.forEach(function(d){ if(d.io) d.io.disconnect(); d.el.remove(); });
-  docs = []; state.baseId = null; state.page = 1;
+  docs = []; state.baseId = null; state.page = 1; state.focus = [];
   $("ovlGrid").textContent = "";
+  // 檔案沒了,標記歷程也必須一起歸零,否則歷程清單會留下指向已移除檔案的孤兒項目
+  if(typeof inkHist === "object"){
+    inkHist.items = []; inkHist.pos = 0;
+    inkSel = { d:null, i:-1, s:null, drag:null };
+    if(typeof updateInkButtons === "function") updateInkButtons();
+    if(typeof renderInkHist === "function" && !$("inkHistPop").hidden) renderInkHist();
+  }
+  updateFocusBar();
   refreshGrid(); refreshMeta();
 }
 
@@ -485,8 +623,9 @@ function colCount(n){
   return clamp(parseInt(state.cols, 10), 1, 6);
 }
 function refreshGrid(){
-  var n = docs.length;
-  $("emptyState").hidden = n > 0;
+  $("emptyState").hidden = docs.length > 0;
+  // 聚焦時只按「看得到的份數」排版,版面才會真的放大
+  var n = shownDocs().length;
   var cols = colCount(n);
   var g = $("grid");
   g.style.gridTemplateColumns = "repeat(" + cols + ",minmax(0,1fr))";
@@ -502,6 +641,7 @@ function refreshGrid(){
   $("ovlGrid").style.gridTemplateColumns = "repeat(" + colCount(m) + ",minmax(0,1fr))";
   requestAnimationFrame(relayoutAll);
 }
+
 
 /* ================= render ================= */
 /* 回傳第 i 頁該用的縮放比例。fit 模式:整份以最寬頁符合欄寬;手動縮放則用固定倍率。 */
@@ -649,6 +789,7 @@ function clear(wrap){
 function relayoutAll(){
   docs.forEach(function(d){
     if(!d.doc || !d.wraps.length) return;
+    if(!isShown(d)) return;          // 被聚焦隱藏的窗格寬度為 0,跳過以免算出錯誤縮放
     var keep = posOf(d), kx = hCenter(d);
     applyScale(d);
     goTo(d, keep.i, keep.f);
@@ -725,7 +866,7 @@ function rebuildOverlay(){
   g.textContent = "";
   var b = baseDoc();
   docs.forEach(function(d, i){
-    if(!d.doc || d.id === state.baseId) return;
+    if(!d.doc || d.id === state.baseId || !isShown(d)){ d.cell = null; return; }
     var cell = document.createElement("div");
     cell.className = "cell";
     cell.innerHTML =
@@ -1730,7 +1871,7 @@ function shotCells(){
   var out = [];
   if(state.mode === "side"){
     docs.forEach(function(d, i){
-      if(!d.doc) return;
+      if(!d.doc || !isShown(d)) return;    // 聚焦時只截看得到的那幾份
       out.push({
         box: d.scroll,
         label: pad(i+1) + "  " + d.name + "   第 " + (posOf(d).i + 1) + " 頁",
@@ -2103,7 +2244,12 @@ $("textBtn").addEventListener("click", openDiff);
   $("inkUndo").addEventListener("click", function(){ inkUndo(); renderInkHist(); });
   $("inkRedo").addEventListener("click", function(){ inkRedo(); renderInkHist(); });
   $("inkClear").addEventListener("click", function(){
-    if(inkCount() && confirm("確定清除所有標記?")){ inkClearAll(); renderInkHist(); }
+    var n = inkCount();
+    if(!n) return;
+    if(confirm("清除全部 " + n + " 筆標記?\n\nPDF 檔案會留著，只刪掉畫筆、符號與文字。")){
+      inkClearAll(); renderInkHist();
+      toast("已清除 " + n + " 筆標記");
+    }
   });
   updateInkButtons();
 })();
@@ -2114,7 +2260,54 @@ $("diffRun").addEventListener("click", runDiff);
 $("diffTarget").addEventListener("change", runDiff);
 $("diffPage").addEventListener("change", runDiff);
 $("diffClose").addEventListener("click", function(){ $("drawer").hidden = true; });
-$("clearBtn").addEventListener("click", clearAll);
+/* 清除選單:標記與檔案分開,各自確認 */
+$("clearBtn").addEventListener("click", function(e){
+  e.stopPropagation();
+  var p = $("clearPop");
+  p.hidden = !p.hidden;
+  if(!p.hidden){
+    $("gridPop").hidden = true; $("inkPop").hidden = true;
+    $("inkSymPop").hidden = true; $("inkHistPop").hidden = true;
+    var nInk = inkCount(), nDoc = docs.length;
+    $("clearInk").disabled = nInk === 0;
+    $("clearFiles").disabled = nDoc === 0;
+    $("clearInk").querySelector("small").innerHTML =
+      nInk ? ("目前有 " + nInk + " 筆標記<br>PDF 檔案留著，繼續比對")
+           : "目前沒有任何標記";
+    $("clearFiles").querySelector("small").innerHTML =
+      nDoc ? ("移除全部 " + nDoc + " 份 PDF，回到空白畫面<br>"
+              + (nInk ? ("連同 " + nInk + " 筆標記一起消失") : "目前沒有標記"))
+           : "目前沒有載入檔案";
+  }
+});
+document.addEventListener("click", function(e){
+  var p = $("clearPop");
+  if(p.hidden) return;
+  if(!p.contains(e.target) && !$("clearBtn").contains(e.target)) p.hidden = true;
+});
+$("clearInk").addEventListener("click", function(){
+  $("clearPop").hidden = true;
+  var n = inkCount();
+  if(!n) return;
+  if(confirm("清除全部 " + n + " 筆標記?\n\nPDF 檔案會留著，只刪掉畫筆、符號與文字。")){
+    inkClearAll();
+    if(typeof renderInkHist === "function") renderInkHist();
+    toast("已清除 " + n + " 筆標記");
+  }
+});
+$("clearFiles").addEventListener("click", function(){
+  $("clearPop").hidden = true;
+  var nDoc = docs.length, nInk = inkCount();
+  if(!nDoc) return;
+  var msg = "移除全部 " + nDoc + " 份 PDF?\n\n畫面會回到空白，要重新拖檔案進來。";
+  if(nInk) msg += "\n你畫的 " + nInk + " 筆標記也會一起消失。";
+  if(confirm(msg)){
+    inkClearAll();
+    clearAll();
+    toast("已清除全部檔案");
+  }
+});
+$("focusAll").addEventListener("click", clearFocus);
 
 document.addEventListener("keydown", function(e){
   if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
@@ -2122,6 +2315,7 @@ document.addEventListener("keydown", function(e){
   if((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))){ e.preventDefault(); inkRedo(); return; }
   if((e.key === "Delete" || e.key === "Backspace") && inkSel.s){ e.preventDefault(); inkDeleteSel(); return; }
   if(e.key === "Escape" && inkSel.s){ e.preventDefault(); inkClearSel(); return; }
+  if(e.key === "Escape" && focusOn()){ e.preventDefault(); clearFocus(); return; }
   if(state.mode !== "overlay") return;
   if(e.key === "ArrowRight" || e.key === "PageDown"){ state.page++; composeAll(); e.preventDefault(); }
   if(e.key === "ArrowLeft" || e.key === "PageUp"){ state.page--; composeAll(); e.preventDefault(); }
