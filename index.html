@@ -86,6 +86,11 @@ input.num.hex{width:78px;text-transform:uppercase;font-size:12px}
 .histrow .hname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .histrow .hidx{font-family:var(--font-mono);font-size:10px;color:var(--muted);flex:none}
 .ink{position:absolute;inset:0;z-index:3;pointer-events:none}
+/* 就地輸入的文字方塊:背景透明,直接疊在頁面上打字 */
+.inktext{position:absolute;z-index:6;margin:0;padding:1px 3px;resize:none;overflow:hidden;
+  background:rgba(255,255,255,.72);border:1px dashed var(--cyan);border-radius:3px;
+  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  white-space:pre;min-width:60px;outline:none;box-shadow:0 2px 10px rgba(0,0,0,.25)}
 .pg canvas.ink{background:transparent}
 .inkmode .scroll{cursor:crosshair}
 .selmode .scroll{cursor:default}
@@ -192,7 +197,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
   <header class="bar">
     <div class="brand">
       <svg class="mark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><circle cx="8" cy="8" r="4.2"/><path d="M8 0v4.5M8 11.5V16M0 8h4.5M11.5 8H16"/></svg>
-      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v13</span>
+      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v14</span>
     </div>
 
     <input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden>
@@ -700,6 +705,7 @@ var PAD = 12, GAP = 12;
 
 function layout(d){
   if(!d.doc || !d.sizes.length) return;
+  if(typeof inkCommitText === "function") inkCommitText();   // 重建頁面前先收掉文字方塊
   if(d.io) d.io.disconnect();
   d.pages.textContent = "";
   d.wraps = [];
@@ -830,6 +836,8 @@ function clear(wrap){
 }
 
 function relayoutAll(){
+  // 版面要重算時先收掉編輯中的文字方塊,否則它的絕對位置會對不上新的頁面尺寸
+  if(typeof inkCommitText === "function") inkCommitText();
   docs.forEach(function(d){
     if(!d.doc || !d.wraps.length) return;
     if(!isShown(d)) return;          // 被聚焦隱藏的窗格寬度為 0,跳過以免算出錯誤縮放
@@ -1200,10 +1208,17 @@ function inkBounds(s){
   // 文字方塊:依字數與行數估算範圍(供選取框使用)
   if(s.tool === "text"){
     var lines2 = String(s.text || "").split("\n");
+    // 中日韓字是全形(約 1 個字高寬),英數約 0.55,分開估算才不會把點擊範圍算得太小
     var longest = 0;
-    lines2.forEach(function(l){ longest = Math.max(longest, l.length); });
+    lines2.forEach(function(l){
+      var em = 0;
+      for(var q=0;q<l.length;q++){
+        em += /[ᄀ-ᇿ⺀-꓏가-힣豈-﫿︰-﹏＀-｠]/.test(l[q]) ? 1 : 0.55;
+      }
+      longest = Math.max(longest, em);
+    });
     var fsN = (s.fsize || 16) / 800;                 // 正規化字高(以頁寬為基準)
-    var wN = Math.max(0.02, longest * fsN * 0.62);
+    var wN = Math.max(0.02, longest * fsN);
     var hN = Math.max(0.02, lines2.length * fsN * 1.35 * (s._ar || 1.3));
     b = { x0:s.pts[0].x, x1:s.pts[0].x + wN, y0:s.pts[0].y, y1:s.pts[0].y + hN };
   }
@@ -1345,7 +1360,7 @@ function inkRedraw(d, i){
   var cw = w.clientWidth, ch = w.clientHeight;
   if(cw < 1 || ch < 1) return;
   var drawingHere = ink.drawing && ink.drawing.d === d && ink.drawing.i === i;
-  var live = strokes.filter(function(s){ return s.seq <= inkHist.pos; });
+  var live = strokes.filter(function(s){ return s.seq <= inkHist.pos && !s._editing; });
   if(!live.length && !drawingHere){
     var old = w.querySelector("canvas.ink"); if(old) old.remove();
     return;
@@ -1515,6 +1530,89 @@ function inkHit(d, e){
   return null;
 }
 
+/* ===== 就地文字方塊 =====
+ * 在頁面上直接開一個透明輸入框,所見即所得地打字;離開焦點即寫入。
+ * existing 有值時代表在編輯既有的文字標記。 */
+var inkTextBox = null;
+function inkEditText(d, i, nx, ny, existing){
+  inkCommitText();                       // 先收掉前一個編輯中的方塊
+  var w = d.wraps && d.wraps[i];
+  if(!w) return;
+  var cw = w.clientWidth, ch = w.clientHeight;
+  if(cw < 1) return;
+
+  var fsize = existing ? (existing.fsize || 16) : Math.max(8, ink.size * 4);
+  var color = existing ? existing.color : ink.color;
+  var px = (existing ? existing.pts[0].x : nx) * cw;
+  var py = (existing ? existing.pts[0].y : ny) * ch;
+
+  var ta = document.createElement("textarea");
+  ta.className = "inktext";
+  ta.value = existing ? (existing.text || "") : "";
+  ta.rows = 1;
+  ta.spellcheck = false;
+  ta.style.left = px + "px";
+  ta.style.top = py + "px";
+  ta.style.color = color;
+  ta.style.fontSize = Math.max(9, fsize * (cw / 800)) + "px";
+  ta.style.lineHeight = "1.35";
+  w.appendChild(ta);
+
+  inkTextBox = { d:d, i:i, ta:ta, nx:(existing ? existing.pts[0].x : nx),
+                 ny:(existing ? existing.pts[0].y : ny),
+                 fsize:fsize, color:color, existing:existing || null, cancelled:false };
+
+  // 編輯既有文字時先把原本那筆藏起來,避免和輸入框疊字
+  if(existing){ existing._editing = true; inkRedraw(d, i); }
+
+  function autoSize(){
+    ta.style.height = "auto";
+    ta.style.height = (ta.scrollHeight + 2) + "px";
+    ta.style.width = "auto";
+    var maxW = Math.max(60, cw - px - 8);
+    ta.style.width = Math.min(maxW, Math.max(60, ta.scrollWidth + 8)) + "px";
+  }
+  autoSize();
+  ta.addEventListener("input", autoSize);
+  ta.addEventListener("keydown", function(e){
+    e.stopPropagation();                               // 不要觸發工具的快捷鍵
+    if(e.key === "Escape"){ e.preventDefault(); inkTextBox.cancelled = true; ta.blur(); }
+    // Enter 換行;Ctrl/Cmd+Enter 直接完成
+    if(e.key === "Enter" && (e.ctrlKey || e.metaKey)){ e.preventDefault(); ta.blur(); }
+  });
+  ta.addEventListener("pointerdown", function(e){ e.stopPropagation(); });
+  ta.addEventListener("blur", inkCommitText);
+  setTimeout(function(){ ta.focus(); ta.select(); }, 0);
+  setStatus("文字方塊:直接打字,Enter 換行。點別處或按 Ctrl+Enter 完成,Esc 取消。");
+}
+
+/* 收掉編輯中的文字方塊,並把內容寫回標記 */
+function inkCommitText(){
+  var box = inkTextBox;
+  if(!box) return;
+  inkTextBox = null;
+  var txt = box.ta.value;
+  if(box.ta.parentNode) box.ta.parentNode.removeChild(box.ta);
+
+  if(box.existing){
+    box.existing._editing = false;
+    if(!box.cancelled){
+      if(txt.trim() === ""){ inkSel = { d:box.d, i:box.i, s:box.existing, drag:null }; inkDeleteSel(); return; }
+      box.existing.text = txt;
+    }
+    inkRedraw(box.d, box.i);
+    updateInkButtons();
+    return;
+  }
+  if(box.cancelled || txt.trim() === ""){ inkRedraw(box.d, box.i); return; }
+  var w = box.d.wraps[box.i];
+  inkCommit(box.d, box.i, {
+    tool:"text", color:box.color, size:ink.size, fsize:box.fsize, text:txt,
+    _ar: w ? (w.clientWidth / Math.max(1, w.clientHeight)) : 1.3,
+    pts:[{ x:box.nx, y:box.ny }], seq:0
+  });
+}
+
 /* 將一筆完成的標記寫入資料與歷程(畫筆與文字方塊共用) */
 function inkCommit(d, i, s){
   if(inkHist.pos < inkHist.items.length){
@@ -1564,14 +1662,11 @@ function inkAttach(d){
 
     // 文字方塊:點一下就輸入文字,不需拖曳
     if(ink.tool === "text"){
-      var txt = prompt("輸入文字(可用 Enter 換行請改用 \\n):", "");
-      if(txt === null || txt === "") return;
-      var w3 = d.wraps[h.i];
-      var ts = { tool:"text", color:ink.color, size:ink.size, fsize:Math.max(8, ink.size * 5),
-                 text:String(txt).replace(/\\n/g, "\n"),
-                 _ar: w3 ? (w3.clientWidth / Math.max(1, w3.clientHeight)) : 1.3,
-                 pts:[{x:h.x, y:h.y}], seq:0 };
-      inkCommit(d, h.i, ts);
+      // 點在既有文字上就直接編輯它,否則在該處開一個新的文字方塊。
+      // (不能用雙擊:第一次點擊已經開了輸入框,第二次點擊落在輸入框上,
+      //  兩次目標不同,瀏覽器就不會發出 dblclick 事件)
+      var hitTxt = inkPick(d, h.i, h.x, h.y);
+      inkEditText(d, h.i, h.x, h.y, (hitTxt && hitTxt.tool === "text") ? hitTxt : null);
       return;
     }
 
@@ -1688,6 +1783,18 @@ function inkAttach(d){
   }
   el.addEventListener("pointerup", finish, true);
   el.addEventListener("pointercancel", finish, true);
+
+  /* 雙擊既有的文字標記即可重新編輯(任何工具下都適用) */
+  el.addEventListener("dblclick", function(e){
+    var h = inkHit(d, e);
+    if(!h) return;
+    var picked = inkPick(d, h.i, h.x, h.y);
+    if(picked && picked.tool === "text"){
+      e.preventDefault(); e.stopPropagation();
+      inkClearSel();
+      inkEditText(d, h.i, h.x, h.y, picked);
+    }
+  }, true);
 }
 
 /* 歷程控制:pos 表示「目前生效到第幾筆」。改變 pos 就等於前進/後退。 */
