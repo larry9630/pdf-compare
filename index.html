@@ -115,6 +115,11 @@ input.num.hex{width:78px;text-transform:uppercase;font-size:12px}
 .poff{width:34px;background:transparent;border:1px solid var(--line);border-radius:4px;padding:1px 2px;text-align:center;font-family:var(--font-mono);font-size:11px;flex:none;-moz-appearance:textfield}
 .poff::-webkit-outer-spin-button,.poff::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .px{background:none;border:0;color:var(--muted);cursor:pointer;padding:0 3px;font-size:15px;line-height:1;flex:none}
+.pgrip{color:var(--muted);cursor:grab;padding:0 2px;font-size:13px;line-height:1;flex:none;user-select:none;letter-spacing:-1px}
+.pgrip:hover{color:var(--cyan)}
+.pane.dragging{opacity:.4}
+.pane.dropHit{outline:2px dashed var(--cyan);outline-offset:-2px}
+.pane.dropHit .ph{background:#2C3A47}
 .pfocus{background:none;border:0;color:var(--muted);cursor:pointer;padding:0 3px;font-size:13px;line-height:1;flex:none}
 .pfocus:hover{color:var(--cyan)}
 .pane.focused .pfocus{color:var(--cyan)}
@@ -197,7 +202,7 @@ ins{background:rgba(30,158,201,.18);color:#8FDCF7}
   <header class="bar">
     <div class="brand">
       <svg class="mark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><circle cx="8" cy="8" r="4.2"/><path d="M8 0v4.5M8 11.5V16M0 8h4.5M11.5 8H16"/></svg>
-      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v14</span>
+      套版比對台<span class="ver" id="verTag" title="版本，用來確認有沒有更新成功">v15</span>
     </div>
 
     <input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden>
@@ -540,12 +545,94 @@ function refreshMeta(){
   docs.forEach(function(d, i){ d.el.querySelector(".badge").textContent = pad(i+1); });
 }
 
+/* ================= 拖曳排序 =================
+ * 抓住每格標題列左邊的握把,就能把這一格拖到別的位置
+ * (例如 6 格時把上排中間那格拖到右下)。 */
+var dragDocId = null;
+
+function moveDocBefore(dragId, targetId){
+  var ids = docs.map(function(d){ return d.id; });
+  var from = ids.indexOf(dragId), origTo = ids.indexOf(targetId);
+  if(from < 0 || origTo < 0 || from === origTo) return false;
+  var moved = docs.splice(from, 1)[0];
+  // splice 後索引會位移,重新找目標位置
+  var to = docs.map(function(d){ return d.id; }).indexOf(targetId);
+  // 方向要用「原始」索引判斷:往後拖插在目標之後,往前拖插在目標之前。
+  // (若改用位移後的索引,拖到緊鄰的下一格會算成原地不動)
+  docs.splice(from < origTo ? to + 1 : to, 0, moved);
+  reorderPanes();
+  return true;
+}
+
+/* 依 docs 目前的順序重新排列畫面上的窗格 */
+function reorderPanes(){
+  var g = $("grid");
+  // 搬動 DOM 節點會讓內部捲動位置歸零,所以先記下來再還原
+  var keep = docs.map(function(d){
+    return (d.doc && d.tops && d.tops.length) ? posOf(d) : null;
+  });
+  docs.forEach(function(d){ if(d.el) g.appendChild(d.el); });
+  docs.forEach(function(d, i){
+    if(keep[i]) goTo(d, keep[i].i, keep[i].f);
+  });
+  refreshMeta();
+  refreshGrid();
+  if(state.mode === "overlay") rebuildOverlay();
+}
+
+function attachDrag(d, pane){
+  var ph = pane.querySelector(".ph");
+  var grip = pane.querySelector(".pgrip");
+  // 只有握把能發動拖曳,才不會干擾標題列上的按鈕與輸入框
+  grip.addEventListener("pointerdown", function(){ ph.setAttribute("draggable", "true"); });
+  ["pointerup","pointerleave"].forEach(function(ev){
+    grip.addEventListener(ev, function(){ ph.removeAttribute("draggable"); });
+  });
+
+  ph.addEventListener("dragstart", function(e){
+    dragDocId = d.id;
+    pane.classList.add("dragging");
+    try{
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", "pane:" + d.id);   // Firefox 需要有資料才會開始拖曳
+    }catch(err){}
+  });
+  ph.addEventListener("dragend", function(){
+    dragDocId = null;
+    ph.removeAttribute("draggable");
+    docs.forEach(function(x){
+      if(x.el){ x.el.classList.remove("dragging"); x.el.classList.remove("dropHit"); }
+    });
+  });
+
+  pane.addEventListener("dragover", function(e){
+    if(dragDocId === null || dragDocId === d.id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    docs.forEach(function(x){ if(x.el) x.el.classList.toggle("dropHit", x.id === d.id); });
+  });
+  pane.addEventListener("dragleave", function(e){
+    if(e.relatedTarget && pane.contains(e.relatedTarget)) return;
+    pane.classList.remove("dropHit");
+  });
+  pane.addEventListener("drop", function(e){
+    if(dragDocId === null || dragDocId === d.id) return;
+    e.preventDefault(); e.stopPropagation();
+    moveDocBefore(dragDocId, d.id);
+    dragDocId = null;
+    docs.forEach(function(x){
+      if(x.el){ x.el.classList.remove("dragging"); x.el.classList.remove("dropHit"); }
+    });
+  });
+}
+
 /* ================= panes ================= */
 function buildPane(d){
   var pane = document.createElement("div");
   pane.className = "pane";
   pane.innerHTML =
     '<div class="ph">' +
+      '<span class="pgrip" title="按住這裡拖曳，可調整這一格的位置">⠿</span>' +
       '<button class="badge" title="設為基準檔">--</button>' +
       '<span class="pname"></span>' +
       '<span class="pind"></span>' +
@@ -578,6 +665,7 @@ function buildPane(d){
   d.scroll.addEventListener("scroll", function(){ onScroll(d); });
   addPan(d.scroll);
   inkAttach(d);
+  attachDrag(d, pane);
   $("grid").appendChild(pane);
 }
 
@@ -2173,12 +2261,32 @@ $("browseLink").addEventListener("click", function(e){ e.preventDefault(); $("pi
 
 var stage = $("stage");
 ["dragenter","dragover"].forEach(function(ev){
-  stage.addEventListener(ev, function(e){ e.preventDefault(); stage.classList.add("over"); });
+  stage.addEventListener(ev, function(e){
+    if(!isFileDrag(e)) return;          // 拖動窗格排序時不要顯示「拖檔案進來」的外框
+    e.preventDefault(); stage.classList.add("over");
+  });
 });
 ["dragleave","drop"].forEach(function(ev){
-  stage.addEventListener(ev, function(e){ e.preventDefault(); if(ev === "dragleave" && e.relatedTarget) return; stage.classList.remove("over"); });
+  stage.addEventListener(ev, function(e){
+    if(ev === "dragleave" && e.relatedTarget) return;
+    stage.classList.remove("over");
+  });
 });
-stage.addEventListener("drop", function(e){ if(e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+stage.addEventListener("drop", function(e){
+  if(!isFileDrag(e)) return;
+  e.preventDefault();
+  if(e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
+});
+/* 判斷這是不是「從檔案總管拖檔案進來」,而不是在頁內拖動窗格 */
+function isFileDrag(e){
+  var dt = e.dataTransfer;
+  if(!dt) return false;
+  if(dt.types && dt.types.length){
+    for(var i=0;i<dt.types.length;i++) if(dt.types[i] === "Files") return true;
+    return false;
+  }
+  return true;
+}
 
 $("modeSeg").addEventListener("click", function(e){
   var btn = e.target.closest("button");
